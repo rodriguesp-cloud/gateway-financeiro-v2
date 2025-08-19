@@ -123,17 +123,16 @@ export class FirestoreService {
     async saveConfig(config) {
         const dataToSave = { ...config };
     
-        // If dateRange exists but from/to are undefined, remove it to avoid Firestore error.
-        if (dataToSave.dateRange && (dataToSave.dateRange.from === undefined || dataToSave.dateRange.to === undefined)) {
+        // Only include dateRange in the data to be saved if it's a valid object with valid dates.
+        if (dataToSave.dateRange?.from && dataToSave.dateRange?.to) {
+            // Convert valid Dates to Timestamps for Firestore
+            dataToSave.dateRange = {
+                from: Timestamp.fromDate(new Date(dataToSave.dateRange.from)),
+                to: Timestamp.fromDate(new Date(dataToSave.dateRange.to)),
+            };
+        } else {
+            // If dateRange is undefined, null, or has invalid dates, remove it completely.
             delete dataToSave.dateRange;
-        } else if (dataToSave.dateRange) {
-             // Convert valid Dates to Timestamps for Firestore
-            if (dataToSave.dateRange.from) {
-                dataToSave.dateRange.from = Timestamp.fromDate(new Date(dataToSave.dateRange.from));
-            }
-            if (dataToSave.dateRange.to) {
-                dataToSave.dateRange.to = Timestamp.fromDate(new Date(dataToSave.dateRange.to));
-            }
         }
         
         await setDoc(this.configDoc, dataToSave, { merge: true });
