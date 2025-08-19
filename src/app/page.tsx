@@ -16,12 +16,13 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { Check, ChevronDown, Pencil, Trash, PlusCircle, ChevronsUpDown, Eye, EyeOff, FileDown, LogOut } from "lucide-react";
+import { Check, ChevronDown, Pencil, Trash, PlusCircle, ChevronsUpDown, Eye, EyeOff, FileDown, LogOut, User as UserIcon } from "lucide-react";
 import { DatePickerWithPresets } from "@/components/DatePickerWithPresets";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import html2canvas from "html2canvas";
 
 
@@ -47,7 +48,7 @@ const catName = (data, id) => categoryById(data, id)?.name || "";
 const subName = (data, id) => subcatById(data, id)?.name || "";
 
 const entriesInDateRange = (entries, range) => {
-    // If no range is selected or it's invalid, return all entries
+    // If no range is selected or it's invalid (like when "All time" is chosen), return all entries.
     if (!range?.from) {
         return entries;
     }
@@ -62,10 +63,11 @@ const entriesInDateRange = (entries, range) => {
     return entries.filter((e) => {
         if (!e.date) return false;
         
-        // Parse the entry date string "YYYY-MM-DD" into a Date object in the local timezone
+        // IMPORTANT: Create the date object from "YYYY-MM-DD" string by splitting it.
+        // This ensures the date is interpreted in the user's local timezone, matching the filter range.
+        // new Date('2024-07-26') would incorrectly create it in UTC midnight.
         const dateParts = e.date.split('-').map(Number); // [YYYY, MM, DD]
         const entryDate = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
-        entryDate.setHours(0, 0, 0, 0); // Normalize to the start of the day
         
         return entryDate >= from && entryDate <= to;
     });
@@ -80,7 +82,7 @@ const computeKpisForRange = (data, range) => {
   for (const e of inRange) {
     const cat = categoryById(data, e.categoryId);
     if (!cat) continue;
-    const s = Number(e.value) || 0; 
+    const s = Number(e.value) || 0;
     const sign = groupSign(cat.group);
     
     if (cat.group === "entrada") kpis.Entradas += s;
@@ -268,6 +270,9 @@ export default function App() {
 
   const [editingCategory, setEditingCategory] = useState(null);
   const [editingSubcategory, setEditingSubcategory] = useState(null);
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [profileName, setProfileName] = useState("");
+
 
   const [activeMetrics, setActiveMetrics] = useState([]);
   
@@ -286,6 +291,11 @@ export default function App() {
     }
   }, [user, authLoading, router]);
 
+  useEffect(() => {
+    if (config.name) {
+      setProfileName(config.name);
+    }
+  }, [config.name]);
 
   useEffect(() => {
     if (data.categorias.length > 0) {
@@ -367,6 +377,12 @@ export default function App() {
   const handleFilterCategoryChange = (categoryId) => {
     setFilterCat(categoryId);
     setFilterSub(""); 
+  };
+
+  const saveProfile = () => {
+    setConfig(c => ({...c, name: profileName}));
+    setEditingProfile(false);
+    showToast("Perfil atualizado com sucesso!", "success");
   };
 
   // --- CRUD Lançamentos ---
@@ -500,14 +516,13 @@ export default function App() {
     showToast("Gerando PDF...", "loading", 5000);
 
     try {
-        const autoTable = (await import('jspdf-autotable')).default;
         const pdf = new jsPDF();
 
         // Header
         pdf.setFontSize(18);
         pdf.text("Relatório Financeiro", 14, 22);
         pdf.setFontSize(11);
-        pdf.text("Gateway Financeiro", 14, 28);
+        pdf.text(config.name || "Gateway Financeiro", 14, 28);
         
         const dateRangeText = config.dateRange?.from 
             ? `${new Date(config.dateRange.from).toLocaleDateString('pt-BR')} - ${new Date(config.dateRange.to || config.dateRange.from).toLocaleDateString('pt-BR')}`
@@ -545,13 +560,15 @@ export default function App() {
           const sub = subcatById(data, e.subcategoryId);
           const signedValue = groupSign(cat?.group) * (e.value || 0);
           return [
-            e.date,
+            new Date(e.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' }),
             cat?.name || '',
             sub?.name || '',
             e.description || '',
             fmtBRL(signedValue)
           ];
         });
+        
+        const autoTable = (await import('jspdf-autotable')).default;
 
         autoTable(pdf, {
             startY: kpiY + 25 + imgHeight + 10,
@@ -613,10 +630,11 @@ export default function App() {
       {/* Hero */}
       <div className={heroBg}>
         <div className="max-w-7xl mx-auto px-6 py-8">
+          <p className="text-xs italic text-white/70 mb-2">Gestor Financeiro App V2.0</p>
           <div className="flex items-end justify-between flex-wrap gap-4">
             <div className="flex items-center gap-4">
               <div>
-                <h1 className="text-3xl font-semibold tracking-tight">Gateway Financeiro</h1>
+                <h1 className="text-3xl font-semibold tracking-tight">{config.name || "Gateway Financeiro"}</h1>
                 <p className="text-sm/6 text-white/70">Dashboard de finanças inteligente: visualize, filtre e exporte com praticidade.</p>
               </div>
             </div>
@@ -626,10 +644,12 @@ export default function App() {
                 onDateChange={(range) => setConfig(c => ({...c, dateRange: range}))}
               />
               <div className="hidden md:block w-px h-6 bg-white/20" />
+              <Button variant="outline" className="bg-white/10 text-white border-white/20 hover:bg-white/20 hover:text-white" onClick={() => setEditingProfile(true)}>
+                  <UserIcon /> Perfil
+              </Button>
               <Button variant="outline" className="bg-white/10 text-white border-white/20 hover:bg-white/20 hover:text-white" onClick={() => setConfig((c) => ({ ...c, privacy: !c.privacy }))}>
                 {config.privacy ? <EyeOff /> : <Eye />}
               </Button>
-              <Button variant="outline" className="bg-white/10 text-white border-white/20 hover:bg-white/20 hover:text-white" onClick={() => setConfig((c) => ({ ...c, dark: !c.dark }))}>{config.dark ? "Tema: Escuro" : "Tema: Claro"}</Button>
               <Button variant="outline" className="bg-white/10 text-white border-white/20 hover:bg-white/20 hover:text-white" onClick={handleDownloadPdf} disabled={isDownloadingPdf}>
                 {isDownloadingPdf ? <Spinner /> : <FileDown />}
                 {isDownloadingPdf ? "Gerando..." : "Baixar PDF"}
@@ -757,7 +777,7 @@ export default function App() {
                     const signed = groupSign(cat?.group) * (e.value || 0);
                     return (
                       <tr key={e.id} className="border-t">
-                        <td className="py-2 pr-3 whitespace-nowrap">{e.date}</td>
+                        <td className="py-2 pr-3 whitespace-nowrap">{new Date(e.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}</td>
                         <td className="py-2 pr-3">{cat?.name || ""}</td>
                         <td className="py-2 pr-3">{sub?.name || ""}</td>
                         <td className="py-2 pr-3">{e.description}</td>
@@ -921,11 +941,30 @@ export default function App() {
           </div>
         </Modal>
       )}
+
+      {editingProfile && (
+        <Modal title="Editar Perfil" onClose={() => setEditingProfile(false)}>
+            <div className="space-y-4">
+                <div>
+                    <label className="text-xs text-slate-500">Nome do Perfil</label>
+                    <input 
+                        className="w-full border rounded-lg px-3 py-2" 
+                        value={profileName} 
+                        onChange={(e) => setProfileName(e.target.value)} 
+                        placeholder="Ex: Minha Empresa, Finanças Pessoais"
+                    />
+                </div>
+                <div className="flex justify-end gap-2 mt-2">
+                    <Button variant="outline" onClick={() => setEditingProfile(false)}>Cancelar</Button>
+                    <Button onClick={saveProfile}>Salvar</Button>
+                </div>
+            </div>
+        </Modal>
+      )}
+
       <footer className="text-center py-4 text-sm text-slate-500">
         Desenvolvido por Yuri Rodrigues 🚀
       </footer>
     </div>
   );
 }
-
-    
