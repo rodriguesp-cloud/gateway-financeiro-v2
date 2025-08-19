@@ -47,22 +47,30 @@ const catName = (data, id) => categoryById(data, id)?.name || "";
 const subName = (data, id) => subcatById(data, id)?.name || "";
 
 const entriesInDateRange = (entries, range) => {
-  if (!range?.from) return entries;
-  
-  const from = new Date(range.from);
-  from.setHours(0, 0, 0, 0);
-  const to = new Date(range.to || range.from);
-  to.setHours(23, 59, 59, 999);
-  
-  return entries.filter((e) => {
-    try {
-      const entryDate = new Date(e.date);
-      return entryDate >= from && entryDate <= to;
-    } catch {
-      return false;
+    // If no range is selected or it's invalid, return all entries
+    if (!range?.from) {
+        return entries;
     }
-  });
+
+    // Clone the filter dates to avoid modifying the original state
+    const from = new Date(range.from);
+    from.setHours(0, 0, 0, 0); // Start of the day
+
+    const to = new Date(range.to || range.from);
+    to.setHours(23, 59, 59, 999); // End of the day
+
+    return entries.filter((e) => {
+        if (!e.date) return false;
+        
+        // Parse the entry date string "YYYY-MM-DD" into a Date object in the local timezone
+        const dateParts = e.date.split('-').map(Number); // [YYYY, MM, DD]
+        const entryDate = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
+        entryDate.setHours(0, 0, 0, 0); // Normalize to the start of the day
+        
+        return entryDate >= from && entryDate <= to;
+    });
 };
+
 
 const computeKpisForRange = (data, range) => {
   const inRange = entriesInDateRange(data.entries, range);
@@ -72,7 +80,7 @@ const computeKpisForRange = (data, range) => {
   for (const e of inRange) {
     const cat = categoryById(data, e.categoryId);
     if (!cat) continue;
-    const s = Number(e.value) || 0; // GARANTIR que é número
+    const s = Number(e.value) || 0; 
     const sign = groupSign(cat.group);
     
     if (cat.group === "entrada") kpis.Entradas += s;
@@ -109,7 +117,7 @@ const buildSeriesForRange = (data, range) => {
         const cat = categoryById(data, e.categoryId);
         if (!cat) continue;
         
-        const value = Number(e.value) || 0; // GARANTIR que é número
+        const value = Number(e.value) || 0; 
         const sign = groupSign(cat.group);
         
         if (cat.group === "entrada") {
@@ -288,7 +296,7 @@ export default function App() {
   }, [data.categorias]);
 
 
-  const kpis = useMemo(() => (config.dateRange ? computeKpisForRange(data, config.dateRange) : {}), [data, config.dateRange]);
+  const kpis = useMemo(() => computeKpisForRange(data, config.dateRange), [data, config.dateRange]);
   const series = useMemo(() => buildSeriesForRange(data, config.dateRange), [data, config.dateRange]);
   const metricOptions = useMemo(() => ["Entradas", "Saidas", "Resultado", ...data.categorias.map(c => c.name)], [data.categorias]);
   const metricColors = useMemo(() => {
@@ -919,3 +927,5 @@ export default function App() {
     </div>
   );
 }
+
+    
