@@ -21,6 +21,7 @@ const defaultConfig = {
   dateRange: defaultDateRange(),
   dark: false,
   privacy: false,
+  name: ""
 };
 
 export function useFirestore(userId: string | undefined) {
@@ -72,7 +73,15 @@ export function useFirestore(userId: string | undefined) {
       
       setData(initialState);
       if (loadedConfig) {
-        setConfigState(prev => ({ ...prev, ...loadedConfig }));
+        // Ensure date objects are correctly hydrated from Firestore Timestamps
+        const hydratedConfig = { ...loadedConfig };
+        if (hydratedConfig.dateRange?.from && typeof hydratedConfig.dateRange.from.toDate === 'function') {
+          hydratedConfig.dateRange.from = hydratedConfig.dateRange.from.toDate();
+        }
+        if (hydratedConfig.dateRange?.to && typeof hydratedConfig.dateRange.to.toDate === 'function') {
+          hydratedConfig.dateRange.to = hydratedConfig.dateRange.to.toDate();
+        }
+        setConfigState(prev => ({ ...prev, ...hydratedConfig }));
       }
       setLoading(false);
     };
