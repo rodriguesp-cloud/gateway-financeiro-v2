@@ -50,10 +50,12 @@ export function DatePickerWithPresets({ date, onDateChange, className }: DatePic
         to = endOfMonth(subDays(startOfThisMonth, 1));
         break;
       case 'all':
-        from = undefined;
-        to = undefined;
-        break;
+        // Para "Todo o período", passar undefined limpa o filtro
+        onDateChange(undefined);
+        return;
     }
+    
+    // Para todos os outros casos, passar o range com from/to
     onDateChange({ from, to });
   };
   
