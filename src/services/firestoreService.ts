@@ -112,9 +112,13 @@ export class FirestoreService {
         const docSnap = await getDoc(this.configDoc);
         if (docSnap.exists()) {
             const config = docSnap.data();
-            // Convert Timestamps to Dates
-            if (config.dateRange?.from) config.dateRange.from = config.dateRange.from.toDate();
-            if (config.dateRange?.to) config.dateRange.to = config.dateRange.to.toDate();
+            // Convert Timestamps to Dates if they exist
+            if (config.dateRange?.from) {
+                config.dateRange.from = config.dateRange.from.toDate();
+            }
+            if (config.dateRange?.to) {
+                config.dateRange.to = config.dateRange.to.toDate();
+            }
             return config;
         }
         return null;
@@ -123,15 +127,14 @@ export class FirestoreService {
     async saveConfig(config) {
         const dataToSave = { ...config };
     
-        // Only include dateRange in the data to be saved if it's a valid object with valid dates.
-        if (dataToSave.dateRange?.from && dataToSave.dateRange?.to) {
-            // Convert valid Dates to Timestamps for Firestore
+        // Handle dateRange separately to avoid saving undefined
+        if (dataToSave.dateRange && dataToSave.dateRange.from instanceof Date && dataToSave.dateRange.to instanceof Date) {
             dataToSave.dateRange = {
-                from: Timestamp.fromDate(new Date(dataToSave.dateRange.from)),
-                to: Timestamp.fromDate(new Date(dataToSave.dateRange.to)),
+                from: Timestamp.fromDate(dataToSave.dateRange.from),
+                to: Timestamp.fromDate(dataToSave.dateRange.to),
             };
         } else {
-            // If dateRange is undefined, null, or has invalid dates, remove it completely.
+            // If dateRange is not valid, don't save it.
             delete dataToSave.dateRange;
         }
         
