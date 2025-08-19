@@ -1,0 +1,12 @@
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Permite que um usuário autenticado leia e escreva apenas em seus próprios documentos.
+    // Acessa a coleção 'users', e para qualquer documento com um {userId},
+    // permite acesso se o ID do usuário autenticado (request.auth.uid) for o mesmo que o {userId} no caminho do documento.
+    match /users/{userId}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}
