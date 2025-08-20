@@ -24,6 +24,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import html2canvas from "html2canvas";
+import { cn } from "@/lib/utils";
 
 
 // Helpers
@@ -51,22 +52,26 @@ const getSubcatMetricName = (catName, subName) => `${catName} > ${subName}`;
 
 const entriesInDateRange = (entries, range) => {
     if (!range?.from) {
-        return entries;
+        return entries; // Return all entries if "Todo o período" is selected
     }
 
+    // Ensure range dates are correctly set to start/end of day
     const from = new Date(range.from);
-    from.setHours(0, 0, 0, 0); 
+    from.setHours(0, 0, 0, 0);
 
     const to = new Date(range.to || range.from);
     to.setHours(23, 59, 59, 999);
 
     return entries.filter((e) => {
         if (!e.date) return false;
-        
+
+        // Correctly parse the date string "YYYY-MM-DD" to avoid timezone issues.
+        // Split and create date as UTC to ensure consistency.
         const dateParts = e.date.split('-').map(Number);
+        // new Date(year, monthIndex, day)
         const entryDate = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
-        entryDate.setHours(0,0,0,0);
         
+        // No need to set hours here as the comparison is date-based
         return entryDate >= from && entryDate <= to;
     });
 };
@@ -319,6 +324,7 @@ export default function App() {
   const [editingSubcategory, setEditingSubcategory] = useState(null);
   const [editingProfile, setEditingProfile] = useState(false);
   const [profileName, setProfileName] = useState("");
+  const [profileTheme, setProfileTheme] = useState("default");
 
 
   const [activeMetrics, setActiveMetrics] = useState([]);
@@ -339,10 +345,9 @@ export default function App() {
   }, [user, authLoading, router]);
 
   useEffect(() => {
-    if (config.name) {
-      setProfileName(config.name);
-    }
-  }, [config.name]);
+    if (config.name) setProfileName(config.name);
+    if (config.theme) setProfileTheme(config.theme);
+  }, [config]);
 
   useEffect(() => {
     if (data.categorias.length > 0) {
@@ -445,8 +450,14 @@ export default function App() {
     setFilterSub(""); 
   };
 
+  const handleOpenEditProfile = () => {
+    setProfileName(config.name || "");
+    setProfileTheme(config.theme || "default");
+    setEditingProfile(true);
+  };
+
   const saveProfile = () => {
-    setConfig(c => ({...c, name: profileName}));
+    setConfig(c => ({...c, name: profileName, theme: profileTheme }));
     setEditingProfile(false);
     showToast("Perfil atualizado com sucesso!", "success");
   };
@@ -678,8 +689,30 @@ export default function App() {
     router.push('/login');
   };
 
-  const rootBg = config.dark ? "bg-slate-950 text-slate-100" : "bg-gradient-to-b from-slate-50 to-white text-slate-900";
-  const heroBg = config.dark ? "bg-gradient-to-r from-black via-slate-900 to-black text-white" : "bg-gradient-to-r from-slate-900 via-indigo-900 to-slate-900 text-white";
+  const THEMES = {
+    default: {
+      hero: "bg-gradient-to-r from-slate-900 via-indigo-900 to-slate-900 text-white",
+      root: "bg-gradient-to-b from-slate-50 to-white text-slate-900",
+    },
+    sunset: {
+      hero: "bg-gradient-to-r from-red-500 via-orange-500 to-yellow-500 text-white",
+      root: "bg-gradient-to-b from-yellow-50 to-orange-50 text-slate-900",
+    },
+    ocean: {
+      hero: "bg-gradient-to-r from-cyan-500 via-blue-600 to-teal-500 text-white",
+      root: "bg-gradient-to-b from-cyan-50 to-blue-50 text-slate-900",
+    },
+    emerald: {
+      hero: "bg-gradient-to-r from-emerald-500 via-green-600 to-lime-500 text-white",
+      root: "bg-gradient-to-b from-emerald-50 to-green-50 text-slate-900",
+    },
+    purple: {
+      hero: "bg-gradient-to-r from-purple-500 via-indigo-600 to-violet-500 text-white",
+      root: "bg-gradient-to-b from-purple-50 to-indigo-50 text-slate-900",
+    },
+  };
+
+  const currentTheme = THEMES[config.theme] || THEMES.default;
 
   if (loading || !user) {
     return (
@@ -690,13 +723,13 @@ export default function App() {
   }
 
   return (
-    <div className={`min-h-screen ${rootBg}`}>
+    <div className={`min-h-screen ${currentTheme.root}`}>
       <Toast toast={toast} onHide={() => setToast(null)} />
       
       {/* Hero */}
-      <div className={heroBg}>
+      <div className={currentTheme.hero}>
         <div className="max-w-7xl mx-auto px-6 py-8">
-          <p className="text-xs italic text-white/70 mb-2">Gestor Financeiro App v2.1</p>
+          <p className="text-xs italic text-white/70 mb-2">Gestor Financeiro App V2.2</p>
           <div className="flex items-end justify-between flex-wrap gap-4">
             <div className="flex items-center gap-4">
               <div>
@@ -710,7 +743,7 @@ export default function App() {
                 onDateChange={(range) => setConfig(c => ({...c, dateRange: range}))}
               />
               <div className="hidden md:block w-px h-6 bg-white/20" />
-              <Button variant="outline" className="bg-white/10 text-white border-white/20 hover:bg-white/20 hover:text-white" onClick={() => setEditingProfile(true)}>
+              <Button variant="outline" className="bg-white/10 text-white border-white/20 hover:bg-white/20 hover:text-white" onClick={handleOpenEditProfile}>
                   <UserIcon /> Perfil
               </Button>
               <Button variant="outline" className="bg-white/10 text-white border-white/20 hover:bg-white/20 hover:text-white" onClick={() => setConfig((c) => ({ ...c, privacy: !c.privacy }))}>
@@ -1019,6 +1052,16 @@ export default function App() {
                         onChange={(e) => setProfileName(e.target.value)} 
                         placeholder="Ex: Minha Empresa, Finanças Pessoais"
                     />
+                </div>
+                 <div>
+                    <label className="text-xs text-slate-500">Tema</label>
+                    <div className="grid grid-cols-3 gap-2 mt-1">
+                      {Object.entries(THEMES).map(([key, theme]) => (
+                        <div key={key} onClick={() => setProfileTheme(key)} className={cn("h-12 rounded-lg cursor-pointer flex items-center justify-center border-2", profileTheme === key ? 'border-blue-500' : 'border-transparent')}>
+                          <div className={cn("w-10 h-8 rounded-md", theme.hero)}></div>
+                        </div>
+                      ))}
+                    </div>
                 </div>
                 <div className="flex justify-end gap-2 mt-2">
                     <Button variant="outline" onClick={() => setEditingProfile(false)}>Cancelar</Button>
