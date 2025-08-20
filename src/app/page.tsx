@@ -18,7 +18,7 @@ import {
 } from "recharts";
 import { Check, ChevronDown, Pencil, Trash, PlusCircle, ChevronsUpDown, Eye, EyeOff, FileDown, LogOut, User as UserIcon } from "lucide-react";
 import { DatePickerWithPresets } from "@/components/DatePickerWithPresets";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent, DropdownMenuGroup } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import jsPDF from "jspdf";
@@ -46,28 +46,26 @@ const categoryById = (data, id) => data.categorias.find((c) => c.id === id);
 const subcatById = (data, id) => data.subcategorias.find((s) => s.id === id);
 const catName = (data, id) => categoryById(data, id)?.name || "";
 const subName = (data, id) => subcatById(data, id)?.name || "";
+const getSubcatMetricName = (catName, subName) => `${catName} > ${subName}`;
+
 
 const entriesInDateRange = (entries, range) => {
-    // If no range is selected or it's invalid (like when "All time" is chosen), return all entries.
     if (!range?.from) {
         return entries;
     }
 
-    // Clone the filter dates to avoid modifying the original state
     const from = new Date(range.from);
-    from.setHours(0, 0, 0, 0); // Start of the day
+    from.setHours(0, 0, 0, 0); 
 
     const to = new Date(range.to || range.from);
-    to.setHours(23, 59, 59, 999); // End of the day
+    to.setHours(23, 59, 59, 999);
 
     return entries.filter((e) => {
         if (!e.date) return false;
         
-        // IMPORTANT: Create the date object from "YYYY-MM-DD" string by splitting it.
-        // This ensures the date is interpreted in the user's local timezone, matching the filter range.
-        // new Date('2024-07-26') would incorrectly create it in UTC midnight.
-        const dateParts = e.date.split('-').map(Number); // [YYYY, MM, DD]
+        const dateParts = e.date.split('-').map(Number);
         const entryDate = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
+        entryDate.setHours(0,0,0,0);
         
         return entryDate >= from && entryDate <= to;
     });
@@ -78,10 +76,16 @@ const computeKpisForRange = (data, range) => {
   const inRange = entriesInDateRange(data.entries, range);
   const kpis = { Entradas: 0, Saidas: 0, Resultado: 0 };
   data.categorias.forEach(c => kpis[c.name] = 0);
+  data.subcategorias.forEach(s => {
+      const cat = catName(data, s.categoryId);
+      if (cat) kpis[getSubcatMetricName(cat, s.name)] = 0;
+  });
 
   for (const e of inRange) {
     const cat = categoryById(data, e.categoryId);
+    const sub = subcatById(data, e.subcategoryId);
     if (!cat) continue;
+    
     const s = Number(e.value) || 0;
     const sign = groupSign(cat.group);
     
@@ -89,6 +93,10 @@ const computeKpisForRange = (data, range) => {
     if (cat.group === "saida") kpis.Saidas -= s;
     
     kpis[cat.name] = (kpis[cat.name] || 0) + (sign * s);
+    if (sub) {
+        const subcatMetricName = getSubcatMetricName(cat.name, sub.name);
+        kpis[subcatMetricName] = (kpis[subcatMetricName] || 0) + (sign * s);
+    }
   }
   kpis.Resultado = kpis.Entradas + kpis.Saidas;
   return kpis;
@@ -105,6 +113,10 @@ const buildSeriesForRange = (data, range) => {
     const initDayData = () => {
         const dayData = { Entradas: 0, Saidas: 0, Resultado: 0 };
         data.categorias.forEach(c => dayData[c.name] = 0);
+        data.subcategorias.forEach(s => {
+            const cat = catName(data, s.categoryId);
+            if (cat) dayData[getSubcatMetricName(cat, s.name)] = 0;
+        });
         return dayData;
     };
     
@@ -117,6 +129,7 @@ const buildSeriesForRange = (data, range) => {
         }
         
         const cat = categoryById(data, e.categoryId);
+        const sub = subcatById(data, e.subcategoryId);
         if (!cat) continue;
         
         const value = Number(e.value) || 0; 
@@ -129,6 +142,10 @@ const buildSeriesForRange = (data, range) => {
         }
         
         dailyData[day][cat.name] = (dailyData[day][cat.name] || 0) + (sign * value);
+        if (sub) {
+            const subcatMetricName = getSubcatMetricName(cat.name, sub.name);
+            dailyData[day][subcatMetricName] = (dailyData[day][subcatMetricName] || 0) + (sign * value);
+        }
     }
     
     Object.keys(dailyData).forEach(day => {
@@ -140,6 +157,7 @@ const buildSeriesForRange = (data, range) => {
         .map(([date, values]) => ({ date, ...values }))
         .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 };
+
 
 // Ordenação
 const sortEntries = (list, data, sort) => {
@@ -218,15 +236,44 @@ function InteractiveKpi({ title, value, onMetricChange, color, metricOptions, pr
         </div>
       </DropdownMenuTrigger>
       <DropdownMenuContent>
-        {metricOptions.map(metric => (
-          <DropdownMenuItem key={metric} onSelect={() => onMetricChange(metric)}>
-            {metric}
-          </DropdownMenuItem>
-        ))}
+        {metricOptions.map((metric, index) => {
+          if (typeof metric === 'string') {
+            return (
+              <DropdownMenuItem key={metric} onSelect={() => onMetricChange(metric)}>
+                {metric}
+              </DropdownMenuItem>
+            );
+          }
+          if (metric.subcategories.length === 0) {
+             return (
+              <DropdownMenuItem key={metric.name} onSelect={() => onMetricChange(metric.name)}>
+                {metric.name}
+              </DropdownMenuItem>
+            );
+          }
+          return (
+            <DropdownMenuSub key={metric.name}>
+              <DropdownMenuSubTrigger>
+                <span>{metric.name}</span>
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                <DropdownMenuItem onSelect={() => onMetricChange(metric.name)}>Ver total da categoria</DropdownMenuItem>
+                <DropdownMenuGroup>
+                  {metric.subcategories.map(sub => (
+                    <DropdownMenuItem key={sub.name} onSelect={() => onMetricChange(sub.fullName)}>
+                      {sub.name}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuGroup>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          );
+        })}
       </DropdownMenuContent>
     </DropdownMenu>
   );
 }
+
 
 function SortHeader({ label, col, sort, onToggle }) {
   const state = sort.col === col ? sort.dir : null;
@@ -308,16 +355,35 @@ export default function App() {
 
   const kpis = useMemo(() => computeKpisForRange(data, config.dateRange), [data, config.dateRange]);
   const series = useMemo(() => buildSeriesForRange(data, config.dateRange), [data, config.dateRange]);
-  const metricOptions = useMemo(() => ["Entradas", "Saidas", "Resultado", ...data.categorias.map(c => c.name)], [data.categorias]);
+
+  const metricOptions = useMemo(() => {
+    const baseMetrics = ["Entradas", "Saidas", "Resultado"];
+    const categoryMetrics = data.categorias.map(cat => ({
+      name: cat.name,
+      subcategories: data.subcategorias
+        .filter(sub => sub.categoryId === cat.id)
+        .map(sub => ({ name: sub.name, fullName: getSubcatMetricName(cat.name, sub.name) }))
+    }));
+    return [...baseMetrics, ...categoryMetrics];
+  }, [data.categorias, data.subcategorias]);
+
   const metricColors = useMemo(() => {
     const colors = { ...METRIC_COLORS };
     data.categorias.forEach(c => {
       if (!colors[c.name]) {
         colors[c.name] = generateColor(c.name);
       }
+      const subs = data.subcategorias.filter(s => s.categoryId === c.id);
+      subs.forEach(s => {
+          const subcatMetricName = getSubcatMetricName(c.name, s.name);
+          if(!colors[subcatMetricName]) {
+              colors[subcatMetricName] = generateColor(subcatMetricName);
+          }
+      });
     });
     return colors;
-  }, [data.categorias]);
+  }, [data.categorias, data.subcategorias]);
+
 
   const subOptionsFor = (catId) => {
     if (!catId) return [];
@@ -630,7 +696,7 @@ export default function App() {
       {/* Hero */}
       <div className={heroBg}>
         <div className="max-w-7xl mx-auto px-6 py-8">
-          <p className="text-xs italic text-white/70 mb-2">Gestor Financeiro App V2.0</p>
+          <p className="text-xs italic text-white/70 mb-2">Gestor Financeiro App v2.1</p>
           <div className="flex items-end justify-between flex-wrap gap-4">
             <div className="flex items-center gap-4">
               <div>
