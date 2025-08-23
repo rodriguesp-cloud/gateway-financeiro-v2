@@ -15,6 +15,7 @@ const defaultData = {
   categorias: [],
   subcategorias: [],
   entries: [],
+  accounts: [],
 };
 
 const defaultConfig = {
@@ -54,15 +55,17 @@ export function useFirestore(userId: string | undefined) {
       categorias: [],
       subcategorias: [],
       entries: [],
+      accounts: [],
     };
 
     const loadInitialData = async () => {
       await service.initializeDefaultData();
       
-      const [categorias, subcategorias, entries, loadedConfig] = await Promise.all([
+      const [categorias, subcategorias, entries, accounts, loadedConfig] = await Promise.all([
         service.getCategorias(),
         service.getSubcategorias(),
         service.getEntries(),
+        service.getAccounts(),
         service.getConfig(),
       ]);
 
@@ -71,6 +74,7 @@ export function useFirestore(userId: string | undefined) {
       initialState.categorias = categorias;
       initialState.subcategorias = subcategorias;
       initialState.entries = entries;
+      initialState.accounts = accounts;
       
       setData(initialState);
       if (loadedConfig) {
@@ -108,7 +112,9 @@ export function useFirestore(userId: string | undefined) {
   const setConfig = (newConfig) => {
     const updatedConfig = typeof newConfig === 'function' ? newConfig(config) : newConfig;
     setConfigState(updatedConfig);
-    service?.saveConfig(updatedConfig);
+    if(service) {
+        service.saveConfig(updatedConfig);
+    }
   };
 
   return { data, config, setConfig, service, loading };
