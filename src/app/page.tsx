@@ -1,13 +1,16 @@
 
+
 "use client";
 
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth.tsx';
 import { useFirestore } from "@/hooks/useFirestore";
+import { useCountUp } from "@/hooks/useCountUp";
 import { DateRange } from "react-day-picker";
+import { addMonths, format, subDays, startOfDay } from 'date-fns';
 import {
-  LineChart,
+  LineChart as RechartsLineChart,
   Line,
   XAxis,
   YAxis,
@@ -15,11 +18,17 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell,
 } from "recharts";
-import { Check, ChevronDown, Pencil, Trash, PlusCircle, ChevronsUpDown, Eye, EyeOff, FileDown, LogOut, User as UserIcon } from "lucide-react";
+import { Check, ChevronDown, Pencil, Trash, PlusCircle, ChevronsUpDown, Eye, EyeOff, FileDown, LogOut, User as UserIcon, Wallet, LineChart as LineChartIcon, BarChart3, PieChart as PieChartIcon, CheckCircle2, Circle, ArrowDown, ArrowUp } from "lucide-react";
 import { DatePickerWithPresets } from "@/components/DatePickerWithPresets";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent, DropdownMenuGroup } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -45,41 +54,49 @@ const uid = () => (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.
 const groupSign = (g) => (g === "saida" ? -1 : 1);
 const categoryById = (data, id) => data.categorias.find((c) => c.id === id);
 const subcatById = (data, id) => data.subcategorias.find((s) => s.id === id);
+const accountById = (data, id) => data.accounts.find((a) => a.id === id);
 const catName = (data, id) => categoryById(data, id)?.name || "";
 const subName = (data, id) => subcatById(data, id)?.name || "";
+const accountName = (data, id) => accountById(data, id)?.name || "";
 const getSubcatMetricName = (catName, subName) => `${catName} > ${subName}`;
 
-
 const entriesInDateRange = (entries, range) => {
-    if (!range?.from) {
-        return entries; // Return all entries if "Todo o período" is selected
-    }
+  if (!range?.from) {
+    return entries;
+  }
 
-    // Ensure range dates are correctly set to start/end of day
-    const from = new Date(range.from);
-    from.setHours(0, 0, 0, 0);
+  const from = startOfDay(new Date(range.from));
+  const to = new Date(range.to || range.from);
+  to.setHours(23, 59, 59, 999);
 
-    const to = new Date(range.to || range.from);
-    to.setHours(23, 59, 59, 999);
+  return entries.filter((e) => {
+    if (!e.date) return false;
+    
+    // Split the date string and create a Date object in the user's local timezone
+    const parts = e.date.split('-').map(part => parseInt(part, 10));
+    const entryDate = new Date(parts[0], parts[1] - 1, parts[2]);
+    entryDate.setHours(0, 0, 0, 0); // Normalize to the beginning of the day
 
-    return entries.filter((e) => {
-        if (!e.date) return false;
-
-        // Correctly parse the date string "YYYY-MM-DD" to avoid timezone issues.
-        // Split and create date as UTC to ensure consistency.
-        const dateParts = e.date.split('-').map(Number);
-        // new Date(year, monthIndex, day)
-        const entryDate = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
-        
-        // No need to set hours here as the comparison is date-based
-        return entryDate >= from && entryDate <= to;
-    });
+    return entryDate >= from && entryDate <= to;
+  });
 };
 
 
 const computeKpisForRange = (data, range) => {
   const inRange = entriesInDateRange(data.entries, range);
-  const kpis = { Entradas: 0, Saidas: 0, Resultado: 0 };
+  const kpis = { Entradas: 0, Saidas: 0, Resultado: 0, "Saldo Total Atual": 0 };
+  
+  let totalBalance = data.accounts.reduce((acc, account) => acc + (Number(account.initialBalance) || 0), 0);
+  
+  for (const e of data.entries) {
+      if (e.status !== 'paid') continue;
+      const cat = categoryById(data, e.categoryId);
+      if (!cat) continue;
+      const s = Number(e.value) || 0;
+      totalBalance += s * groupSign(cat.group);
+  }
+  kpis["Saldo Total Atual"] = totalBalance;
+  
   data.categorias.forEach(c => kpis[c.name] = 0);
   data.subcategorias.forEach(s => {
       const cat = catName(data, s.categoryId);
@@ -87,6 +104,7 @@ const computeKpisForRange = (data, range) => {
   });
 
   for (const e of inRange) {
+    if (e.status !== 'paid') continue;
     const cat = categoryById(data, e.categoryId);
     const sub = subcatById(data, e.subcategoryId);
     if (!cat) continue;
@@ -126,6 +144,7 @@ const buildSeriesForRange = (data, range) => {
     };
     
     for (const e of inRange) {
+        if (e.status !== 'paid') continue;
         const day = e.date;
         if (!day) continue;
         
@@ -177,6 +196,7 @@ const sortEntries = (list, data, sort) => {
       case "subcategory": va = subName(data, a.subcategoryId); vb = subName(data, b.subcategoryId); return va.localeCompare(vb) * dir;
       case "description": va = a.description || ""; vb = b.description || ""; return va.localeCompare(vb) * dir;
       case "value": va = groupSign(categoryById(data, a.categoryId)?.group) * (a.value || 0); vb = groupSign(categoryById(data, b.categoryId)?.group) * (b.value || 0); return (va - vb) * dir;
+      case "account": va = accountName(data, a.accountId); vb = accountName(data, b.accountId); return va.localeCompare(vb) * dir;
       default: return 0;
     }
   });
@@ -212,6 +232,7 @@ const METRIC_COLORS = {
   "Entradas": "#10b981",
   "Saidas": "#ef4444",
   "Resultado": "#0ea5e9",
+  "Saldo Total Atual": "#8b5cf6",
 };
 
 const generateColor = (str) => {
@@ -229,52 +250,56 @@ const generateColor = (str) => {
 }
 
 function InteractiveKpi({ title, value, onMetricChange, color, metricOptions, privacy }) {
+  const animatedValue = useCountUp(value, 1500);
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <div className="flex-1 p-4 rounded-2xl shadow-sm border border-gray-100 cursor-pointer" style={{ backgroundColor: `${color}1A`}}>
             <div className="flex items-center gap-2 text-sm font-medium" style={{ color }}>
                 <span>{title}</span>
-                <ChevronDown className="h-4 w-4 opacity-70" />
+                {metricOptions && <ChevronDown className="h-4 w-4 opacity-70" />}
             </div>
-            <div className={`text-2xl font-semibold mt-1 tracking-tight text-slate-900 ${privacy ? 'blur-sm' : ''}`}>{fmtBRL(value)}</div>
+            <div className={`text-2xl font-semibold mt-1 tracking-tight text-slate-900 ${privacy ? 'blur-sm' : ''}`}>{fmtBRL(animatedValue)}</div>
         </div>
       </DropdownMenuTrigger>
-      <DropdownMenuContent>
-        {metricOptions.map((metric, index) => {
-          if (typeof metric === 'string') {
+       {metricOptions && (
+        <DropdownMenuContent>
+            {metricOptions.map((metric, index) => {
+            if (typeof metric === 'string') {
+                return (
+                <DropdownMenuItem key={metric} onSelect={() => onMetricChange(metric)}>
+                    {metric}
+                </DropdownMenuItem>
+                );
+            }
+            if (metric.subcategories.length === 0) {
+                return (
+                <DropdownMenuItem key={metric.name} onSelect={() => onMetricChange(metric.name)}>
+                    {metric.name}
+                </DropdownMenuItem>
+                );
+            }
             return (
-              <DropdownMenuItem key={metric} onSelect={() => onMetricChange(metric)}>
-                {metric}
-              </DropdownMenuItem>
+                <DropdownMenuSub key={metric.name}>
+                <DropdownMenuSubTrigger>
+                    <span>{metric.name}</span>
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                    <DropdownMenuItem onSelect={() => onMetricChange(metric.name)}>Ver total da categoria</DropdownMenuItem>
+                    <DropdownMenuGroup>
+                    {metric.subcategories.map(sub => (
+                        <DropdownMenuItem key={sub.name} onSelect={() => onMetricChange(sub.fullName)}>
+                        {sub.name}
+                        </DropdownMenuItem>
+                    ))}
+                    </DropdownMenuGroup>
+                </DropdownMenuSubContent>
+                </DropdownMenuSub>
             );
-          }
-          if (metric.subcategories.length === 0) {
-             return (
-              <DropdownMenuItem key={metric.name} onSelect={() => onMetricChange(metric.name)}>
-                {metric.name}
-              </DropdownMenuItem>
-            );
-          }
-          return (
-            <DropdownMenuSub key={metric.name}>
-              <DropdownMenuSubTrigger>
-                <span>{metric.name}</span>
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent>
-                <DropdownMenuItem onSelect={() => onMetricChange(metric.name)}>Ver total da categoria</DropdownMenuItem>
-                <DropdownMenuGroup>
-                  {metric.subcategories.map(sub => (
-                    <DropdownMenuItem key={sub.name} onSelect={() => onMetricChange(sub.fullName)}>
-                      {sub.name}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuGroup>
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-          );
-        })}
-      </DropdownMenuContent>
+            })}
+        </DropdownMenuContent>
+       )}
     </DropdownMenu>
   );
 }
@@ -290,16 +315,19 @@ function SortHeader({ label, col, sort, onToggle }) {
   );
 }
 
-function Modal({ title, children, onClose }) {
+function Modal({ title, children, onClose, show }) {
+  if (!show) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-white text-slate-900 rounded-2xl shadow-xl border border-gray-200 w-full max-w-lg mx-4 p-4">
-        <div className="flex items-center justify-between mb-2">
+      <div className="relative bg-white text-slate-900 rounded-2xl shadow-xl border border-gray-200 w-full max-w-lg mx-4 p-4 max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between mb-2 flex-shrink-0">
           <h3 className="font-semibold">{title}</h3>
           <button onClick={onClose} className="text-slate-500 hover:text-slate-900">✕</button>
         </div>
-        {children}
+        <div className="overflow-y-auto pr-2 -mr-2">
+            {children}
+        </div>
       </div>
     </div>
   );
@@ -316,15 +344,19 @@ export default function App() {
   const [filterCat, setFilterCat] = useState("");
   const [filterSub, setFilterSub] = useState("");
   const [sort, setSort] = useState({ col: "date", dir: "asc" });
-  const [modal, setModal] = useState({ type: null, payload: null });
-  const [editingEntry, setEditingEntry] = useState(null);
-  const [entryForm, setEntryForm] = useState({ date: new Date().toISOString().split('T')[0], categoryId: "", subcategoryId: "", description: "", value: "" });
+  
+  const [modal, setModal] = useState({ type: null, payload: null, show: false });
+  const [entryModal, setEntryModal] = useState({ show: false, type: 'saida', entry: null });
 
   const [editingCategory, setEditingCategory] = useState(null);
   const [editingSubcategory, setEditingSubcategory] = useState(null);
   const [editingProfile, setEditingProfile] = useState(false);
   const [profileName, setProfileName] = useState("");
   const [profileTheme, setProfileTheme] = useState("default");
+  
+  const [editingAccount, setEditingAccount] = useState(null);
+  
+  const [chartType, setChartType] = useState('line');
 
 
   const [activeMetrics, setActiveMetrics] = useState([]);
@@ -351,18 +383,27 @@ export default function App() {
 
   useEffect(() => {
     if (data.categorias.length > 0) {
-      setActiveMetrics(["Resultado", "Entradas", "Saidas", data.categorias[0].name]);
+      setActiveMetrics(["Resultado", "Entradas", "Saidas", "Saldo Total Atual"]);
     } else {
-      setActiveMetrics(["Resultado", "Entradas", "Saidas"]);
+      setActiveMetrics(["Resultado", "Entradas", "Saidas", "Saldo Total Atual"]);
     }
   }, [data.categorias]);
 
 
   const kpis = useMemo(() => computeKpisForRange(data, config.dateRange), [data, config.dateRange]);
   const series = useMemo(() => buildSeriesForRange(data, config.dateRange), [data, config.dateRange]);
+  
+  const summaryData = useMemo(() => {
+    return activeMetrics.map(metric => ({
+        name: metric,
+        value: kpis[metric] || 0
+    }));
+  }, [activeMetrics, kpis]);
+
+  const animatedTotalBalance = useCountUp(kpis["Saldo Total Atual"], 1500);
 
   const metricOptions = useMemo(() => {
-    const baseMetrics = ["Entradas", "Saidas", "Resultado"];
+    const baseMetrics = ["Entradas", "Saidas", "Resultado", "Saldo Total Atual"];
     const categoryMetrics = data.categorias.map(cat => ({
       name: cat.name,
       subcategories: data.subcategorias
@@ -386,14 +427,14 @@ export default function App() {
           }
       });
     });
+    activeMetrics.forEach(metric => {
+        if (!colors[metric]) {
+            colors[metric] = generateColor(metric);
+        }
+    })
     return colors;
-  }, [data.categorias, data.subcategorias]);
+  }, [data.categorias, data.subcategorias, activeMetrics]);
 
-
-  const subOptionsFor = (catId) => {
-    if (!catId) return [];
-    return data.subcategorias.filter((s) => s.categoryId === catId);
-  };
 
   const availableSubcategoriesForFilter = useMemo(() => {
     if (!filterCat) return [];
@@ -409,7 +450,8 @@ export default function App() {
       const q = search.toLowerCase();
       list = list.filter((e) => 
         (catName(data, e.categoryId) || "").toLowerCase().includes(q) || 
-        (subName(data, e.subcategoryId) || "").toLowerCase().includes(q) || 
+        (subName(data, e.subcategoryId) || "").toLowerCase().includes(q) ||
+        (accountName(data, e.accountId) || "").toLowerCase().includes(q) || 
         (e.description || "").toLowerCase().includes(q)
       );
     }
@@ -429,22 +471,6 @@ export default function App() {
 
   const toggleSort = (col) => setSort((prev) => (prev.col !== col ? { col, dir: "asc" } : prev.dir === "asc" ? { col, dir: "desc" } : prev.dir === "desc" ? { col, dir: null } : { col, dir: "asc" }));
   
-  const handleCategoryChangeForForm = (categoryId) => {
-    setEntryForm(f => ({ 
-      ...f, 
-      categoryId: categoryId, 
-      subcategoryId: "" 
-    }));
-  };
-
-  const handleCategoryChangeForEditingEntry = (categoryId) => {
-    setEditingEntry(currentEntry => ({
-        ...currentEntry,
-        categoryId: categoryId,
-        subcategoryId: "", // Reset subcategory when category changes
-    }));
-  };
-
   const handleFilterCategoryChange = (categoryId) => {
     setFilterCat(categoryId);
     setFilterSub(""); 
@@ -462,54 +488,66 @@ export default function App() {
     showToast("Perfil atualizado com sucesso!", "success");
   };
 
-  // --- CRUD Lançamentos ---
-  const addEntry = async () => {
-    if (!entryForm.date || !entryForm.categoryId || !entryForm.subcategoryId || entryForm.value === "") {
-      showToast("Preencha data, categoria, subcategoria e valor.", "error");
-      return;
+  const handleOpenEntryModal = (type, entry = null) => {
+    setEntryModal({ show: true, type, entry });
+  };
+
+  const handleCloseEntryModal = () => {
+    setEntryModal({ show: false, type: 'saida', entry: null });
+  };
+  
+  const handleSaveEntry = async (entryData, installments) => {
+    try {
+      if (entryData.id && installments <= 1) { // Simple update
+        await service.updateEntry(entryData.id, entryData);
+        showToast("Lançamento atualizado!", "success");
+      } else { // New entry or recurring entry
+        const batch = [];
+        const originalDescription = entryData.description || "";
+        for (let i = 0; i < installments; i++) {
+          const newDate = new Date(entryData.date);
+          newDate.setMonth(newDate.getMonth() + i);
+  
+          const newEntry = {
+            ...entryData,
+            id: uid(),
+            date: format(newDate, 'yyyy-MM-dd'),
+            yearMonth: format(newDate, 'yyyy-MM'),
+            description: installments > 1 ? `${originalDescription} (${i + 1}/${installments})` : originalDescription,
+            status: i === 0 && entryData.status === 'paid' ? 'paid' : 'pending',
+          };
+          batch.push(newEntry);
+        }
+        await service.addBatchEntries(batch);
+        showToast(installments > 1 ? "Lançamentos parcelados criados!" : "Lançamento adicionado!", "success");
+      }
+      handleCloseEntryModal();
+    } catch (error) {
+        console.error("Failed to save entry:", error);
+        showToast("Erro ao salvar lançamento.", "error");
     }
-    const e = { 
-      id: uid(), 
-      date: entryForm.date, 
-      yearMonth: ymFromDate(entryForm.date), 
-      categoryId: entryForm.categoryId, 
-      subcategoryId: entryForm.subcategoryId, 
-      description: entryForm.description || "", 
-      value: Number(entryForm.value) 
-    };
-    await service.addEntry(e);
-    setEntryForm({ date: new Date().toISOString().split('T')[0], categoryId: "", subcategoryId: "", description: "", value: "" });
-    showToast("Lançamento adicionado!", "success");
+  };
+  
+  const handleToggleEntryStatus = async (entry) => {
+    const newStatus = entry.status === 'paid' ? 'pending' : 'paid';
+    await service.updateEntry(entry.id, { ...entry, status: newStatus });
+    showToast(`Status alterado para ${newStatus === 'paid' ? 'pago' : 'pendente'}`, "success");
   };
 
   const askDeleteEntry = (id) => setModal({ 
+    show: true,
     type: "confirm", 
     payload: { 
       title: "Excluir lançamento", 
       message: "Tem certeza?", 
       onConfirm: async () => { 
         await service.deleteEntry(id);
-        setModal({ type: null, payload: null }); 
+        setModal({ type: null, payload: null, show: false }); 
         showToast("Lançamento excluído!", "success"); 
       } 
     } 
   });
   
-  const startEditEntry = (entry) => {
-    setEditingEntry({ ...entry });
-  };
-  
-  const saveEditEntry = async () => {
-    if (!editingEntry) return;
-    if (!editingEntry.date || !editingEntry.categoryId || !editingEntry.subcategoryId || editingEntry.value === "") {
-      showToast("Preencha data, categoria, subcategoria e valor.", "error");
-      return;
-    }
-    await service.updateEntry(editingEntry.id, editingEntry);
-    setEditingEntry(null);
-    showToast("Lançamento atualizado!", "success");
-  };
-
   // --- CRUD Categorias ---
   const saveCategory = async () => {
     if (!editingCategory.name || !editingCategory.group) {
@@ -535,13 +573,14 @@ export default function App() {
       return showToast(`Não é possível excluir: Há ${subs.length} subcategorias e ${ents.length} lançamentos associados.`, "error", 4000);
     }
     setModal({ 
+      show: true,
       type: "confirm", 
       payload: { 
         title: "Excluir Categoria", 
         message: `Tem certeza que deseja excluir a categoria "${catName(data, catId)}"?`, 
         onConfirm: async () => {
           await service.deleteCategoria(catId);
-          setModal({ type: null, payload: null });
+          setModal({ type: null, payload: null, show: false });
           showToast("Categoria excluída!", "success");
         }
       }
@@ -572,18 +611,58 @@ export default function App() {
       return showToast(`Não é possível excluir: Há ${ents.length} lançamentos associados.`, "error", 4000);
     }
     setModal({ 
+      show: true,
       type: "confirm", 
       payload: { 
         title: "Excluir Subcategoria", 
         message: `Tem certeza que deseja excluir a subcategoria "${subName(data, subId)}"?`, 
         onConfirm: async () => {
           await service.deleteSubcategoria(subId);
-          setModal({ type: null, payload: null });
+          setModal({ type: null, payload: null, show: false });
           showToast("Subcategoria excluída!", "success");
         }
       }
     });
   };
+
+  // --- CRUD Accounts ---
+    const saveAccount = async () => {
+        if (!editingAccount.name || editingAccount.initialBalance === '') {
+            showToast("Preencha nome e saldo inicial.", "error");
+            return;
+        }
+        const accData = { ...editingAccount, initialBalance: Number(editingAccount.initialBalance) };
+        if (accData.id) { // Update
+            await service.updateAccount(accData.id, accData);
+            showToast("Conta atualizada!", "success");
+        } else { // Create
+            accData.id = uid();
+            await service.addAccount(accData);
+            showToast("Conta criada!", "success");
+        }
+        setEditingAccount(null);
+    };
+
+    const askDeleteAccount = (accId) => {
+        const ents = data.entries.filter(e => e.accountId === accId);
+        if (ents.length > 0) {
+            return showToast(`Não é possível excluir: Há ${ents.length} lançamentos associados a esta conta.`, "error", 4000);
+        }
+        setModal({
+            show: true,
+            type: "confirm",
+            payload: {
+                title: "Excluir Conta",
+                message: `Tem certeza que deseja excluir a conta "${accountName(data, accId)}"?`,
+                onConfirm: async () => {
+                    await service.deleteAccount(accId);
+                    setModal({ type: null, payload: null, show: false });
+                    showToast("Conta excluída!", "success");
+                }
+            }
+        });
+    };
+
 
   const handleDownloadPdf = async () => {
     const chartElement = chartRef.current;
@@ -617,6 +696,7 @@ export default function App() {
         pdf.text(`Resultado: ${fmtBRL(kpis.Resultado)}`, 14, kpiY + 7);
         pdf.text(`Entradas: ${fmtBRL(kpis.Entradas)}`, 14, kpiY + 12);
         pdf.text(`Saídas: ${fmtBRL(kpis.Saidas)}`, 14, kpiY + 17);
+        pdf.text(`Saldo Total: ${fmtBRL(kpis["Saldo Total Atual"])}`, 100, kpiY + 7);
 
         // Chart Image
         const canvas = await html2canvas(chartElement, {
@@ -635,9 +715,11 @@ export default function App() {
         const tableData = entriesSorted.map(e => {
           const cat = categoryById(data, e.categoryId);
           const sub = subcatById(data, e.subcategoryId);
+          const acc = accountById(data, e.accountId);
           const signedValue = groupSign(cat?.group) * (e.value || 0);
           return [
             new Date(e.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' }),
+            acc?.name || '',
             cat?.name || '',
             sub?.name || '',
             e.description || '',
@@ -649,13 +731,13 @@ export default function App() {
 
         autoTable(pdf, {
             startY: kpiY + 25 + imgHeight + 10,
-            head: [['Data', 'Categoria', 'Subcategoria', 'Descrição', 'Valor']],
+            head: [['Data', 'Conta', 'Categoria', 'Subcategoria', 'Descrição', 'Valor']],
             body: tableData,
             theme: 'striped',
             headStyles: { fillColor: [41, 128, 185] }, // Blue header
             didParseCell: function(data) {
                 // Color rows based on value
-                if (data.column.dataKey === 4) { // 'Valor' column
+                if (data.column.dataKey === 5) { // 'Valor' column
                     if (data.cell.raw.toString().includes('-')) {
                         data.cell.styles.textColor = [231, 76, 60]; // Red for negative
                     } else {
@@ -729,7 +811,7 @@ export default function App() {
       {/* Hero */}
       <div className={currentTheme.hero}>
         <div className="max-w-7xl mx-auto px-6 py-8">
-          <p className="text-xs italic text-white/70 mb-2">Gestor Financeiro App V2.2</p>
+          <p className="text-xs italic text-white/70 mb-2">Gestor Financeiro App V3.0</p>
           <div className="flex items-end justify-between flex-wrap gap-4">
             <div className="flex items-center gap-4">
               <div>
@@ -773,6 +855,10 @@ export default function App() {
         </div>
 
         <section className="bg-white text-slate-900 rounded-2xl shadow-sm border border-gray-100 p-4 mb-8">
+            <div className="text-center mb-6">
+                <h2 className="text-sm text-slate-500">Saldo atual em contas</h2>
+                <p className={`text-4xl font-bold tracking-tight text-slate-900 ${config.privacy ? 'blur-sm' : ''}`}>{fmtBRL(animatedTotalBalance)}</p>
+            </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
               {activeMetrics.map((metric, index) => (
                   <InteractiveKpi 
@@ -787,57 +873,75 @@ export default function App() {
               ))}
           </div>
 
-          <div ref={chartRef} className={`w-full h-72 ${config.privacy ? 'blur-sm' : ''}`}>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={series} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" />
-                <YAxis />
-                <Tooltip formatter={(v) => fmtBRL(v)} />
-                <Legend />
-                {Array.from(new Set(activeMetrics)).map(metric => (
-                  <Line key={metric} type="monotone" dataKey={metric} stroke={metricColors[metric]} strokeWidth={2} dot={false} />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
+          <div className="relative">
+             <div className="absolute top-0 right-0 z-10 flex gap-1 p-1 bg-slate-100 rounded-md">
+                <Button variant={chartType === 'line' ? 'secondary' : 'ghost'} size="icon" className="h-7 w-7" onClick={() => setChartType('line')}><LineChartIcon className="h-4 w-4" /></Button>
+                <Button variant={chartType === 'bar' ? 'secondary' : 'ghost'} size="icon" className="h-7 w-7" onClick={() => setChartType('bar')}><BarChart3 className="h-4 w-4" /></Button>
+                <Button variant={chartType === 'pie' ? 'secondary' : 'ghost'} size="icon" className="h-7 w-7" onClick={() => setChartType('pie')}><PieChartIcon className="h-4 w-4" /></Button>
+            </div>
+            <div ref={chartRef} className={`w-full h-72 ${config.privacy ? 'blur-sm' : ''}`}>
+                <ResponsiveContainer width="100%" height="100%">
+                {chartType === 'line' && (
+                    <RechartsLineChart data={series} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="date" />
+                        <YAxis tickFormatter={(v) => fmtBRL(v)} />
+                        <Tooltip formatter={(v) => fmtBRL(v)} />
+                        <Legend />
+                        {Array.from(new Set(activeMetrics)).map(metric => (
+                        <Line key={metric} type="monotone" dataKey={metric} stroke={metricColors[metric]} strokeWidth={2} dot={false} />
+                        ))}
+                    </RechartsLineChart>
+                )}
+                {chartType === 'bar' && (
+                    <BarChart data={summaryData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="name" />
+                        <YAxis tickFormatter={(v) => fmtBRL(v)}/>
+                        <Tooltip formatter={(v) => fmtBRL(v)} />
+                        <Bar dataKey="value">
+                            {summaryData.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={metricColors[entry.name]} />
+                            ))}
+                        </Bar>
+                    </BarChart>
+                )}
+                {chartType === 'pie' && (
+                    <PieChart>
+                         <Tooltip formatter={(value, name) => [fmtBRL(value), name]} />
+                         <Legend />
+                         <Pie
+                            data={summaryData.filter(d => d.value > 0)} // Pie chart cannot represent negative values well
+                            dataKey="value"
+                            nameKey="name"
+                            cx="50%"
+                            cy="50%"
+                            outerRadius={100}
+                            fill="#8884d8"
+                            label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
+                         >
+                           {summaryData.filter(d => d.value > 0).map((entry) => (
+                                <Cell key={entry.name} fill={metricColors[entry.name]} />
+                            ))}
+                         </Pie>
+                    </PieChart>
+                )}
+                </ResponsiveContainer>
+            </div>
           </div>
         </section>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
           <section className="bg-white text-slate-900 rounded-2xl shadow-sm border border-gray-100 p-4 lg:col-span-2">
-            <h2 className="font-semibold tracking-tight mb-4">Lançar novo item</h2>
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end mb-4">
-                <div className="md:col-span-1">
-                    <label className="text-xs text-slate-500">Data</label>
-                    <input type="date" className="w-full border rounded-lg px-3 py-2" value={entryForm.date} onChange={(e) => setEntryForm((f) => ({ ...f, date: e.target.value }))} />
-                </div>
-                <div className="md:col-span-1">
-                    <label className="text-xs text-slate-500">Categoria</label>
-                    <select className="w-full border rounded-lg px-3 py-2" value={entryForm.categoryId} onChange={(e) => handleCategoryChangeForForm(e.target.value)}>
-                    <option value="">Selecione…</option>
-                    {data.categorias.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </select>
-                </div>
-                <div className="md:col-span-1">
-                    <label className="text-xs text-slate-500">Subcategoria</label>
-                    <select className="w-full border rounded-lg px-3 py-2" value={entryForm.subcategoryId} onChange={(e) => setEntryForm((f) => ({ ...f, subcategoryId: e.target.value }))} disabled={!entryForm.categoryId}>
-                    <option value="">Selecione…</option>
-                    {subOptionsFor(entryForm.categoryId).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
-                </div>
-                <div className="md:col-span-1">
-                    <label className="text-xs text-slate-500">Valor</label>
-                    <input type="number" min="0" step="0.01" className="w-full border rounded-lg px-3 py-2" value={entryForm.value} onChange={(e) => setEntryForm((f) => ({ ...f, value: e.target.value }))} />
-                </div>
-                 <div className="md:col-span-1 flex justify-end gap-2">
-                    <Button variant="outline" onClick={() => { setEntryForm({ date: "", categoryId: "", subcategoryId: "", description: "", value: "" }); }}>Limpar</Button>
-                    <Button onClick={addEntry}>Adicionar</Button>
-                </div>
-                <div className="md:col-span-5">
-                    <label className="text-xs text-slate-500">Descrição</label>
-                    <input className="w-full border rounded-lg px-3 py-2" value={entryForm.description} onChange={(e) => setEntryForm((f) => ({ ...f, description: e.target.value }))} placeholder="(opcional)" />
-                </div>
-            </div>
+            <h2 className="font-semibold tracking-tight mb-4">Lançamentos</h2>
+              <div className="flex justify-end gap-2 mb-4">
+                  <Button onClick={() => handleOpenEntryModal('entrada')} className="bg-emerald-500 hover:bg-emerald-600 text-white">
+                      <ArrowUp className="mr-2 h-4 w-4" /> Nova Receita
+                  </Button>
+                  <Button onClick={() => handleOpenEntryModal('saida')} className="bg-red-500 hover:bg-red-600 text-white">
+                      <ArrowDown className="mr-2 h-4 w-4" /> Nova Despesa
+                  </Button>
+              </div>
 
             {/* Filtros da tabela */}
             <div className="flex flex-wrap items-end gap-3 mb-3">
@@ -861,7 +965,9 @@ export default function App() {
               <table className="min-w-full text-sm">
                 <thead>
                   <tr className="text-left text-slate-500">
+                    <th className="py-2 pr-3">Status</th>
                     <th className="py-2 pr-3"><SortHeader label="Data" col="date" sort={sort} onToggle={toggleSort} /></th>
+                    <th className="py-2 pr-3"><SortHeader label="Conta" col="account" sort={sort} onToggle={toggleSort} /></th>
                     <th className="py-2 pr-3"><SortHeader label="Categoria" col="category" sort={sort} onToggle={toggleSort} /></th>
                     <th className="py-2 pr-3"><SortHeader label="Subcategoria" col="subcategory" sort={sort} onToggle={toggleSort} /></th>
                     <th className="py-2 pr-3"><SortHeader label="Descrição" col="description" sort={sort} onToggle={toggleSort} /></th>
@@ -873,16 +979,28 @@ export default function App() {
                   {entriesSorted.map((e) => {
                     const cat = categoryById(data, e.categoryId);
                     const sub = subcatById(data, e.subcategoryId);
+                    const acc = accountById(data, e.accountId);
                     const signed = groupSign(cat?.group) * (e.value || 0);
                     return (
                       <tr key={e.id} className="border-t">
+                        <td className="py-2 pr-3">
+                           <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              title={e.status === 'paid' ? 'Marcado como pago' : 'Marcar como pago'}
+                              onClick={() => handleToggleEntryStatus(e)}
+                            >
+                              {e.status === 'paid' ? <CheckCircle2 className="text-emerald-500" /> : <Circle className="text-slate-400" />}
+                            </Button>
+                        </td>
                         <td className="py-2 pr-3 whitespace-nowrap">{new Date(e.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}</td>
+                        <td className="py-2 pr-3">{acc?.name || ""}</td>
                         <td className="py-2 pr-3">{cat?.name || ""}</td>
                         <td className="py-2 pr-3">{sub?.name || ""}</td>
                         <td className="py-2 pr-3">{e.description}</td>
                         <td className={`py-2 pr-3 text-right ${signed < 0 ? "text-red-600" : "text-emerald-700"} ${config.privacy ? 'blur-sm' : ''}`}>{fmtBRL(signed)}</td>
                         <td className="py-2 flex items-center gap-2">
-                          <Button variant="outline" size="icon" title="Editar" onClick={() => startEditEntry(e)}>
+                          <Button variant="outline" size="icon" title="Editar" onClick={() => handleOpenEntryModal(cat.group, e)}>
                             <Pencil />
                           </Button>
                           <Button variant="outline" size="icon" title="Excluir" onClick={() => askDeleteEntry(e.id)}>
@@ -902,103 +1020,121 @@ export default function App() {
             </div>
           </section>
 
-          <section className="bg-white text-slate-900 rounded-2xl shadow-sm border border-gray-100">
-             <Accordion type="single" collapsible className="w-full">
-              <AccordionItem value="item-1">
-                <AccordionTrigger className="px-4 py-3 font-semibold hover:no-underline">
-                  <div className="flex items-center gap-2">
-                    <ChevronsUpDown className="h-4 w-4" />
-                    Gerenciar Categorias e Subcategorias
-                  </div>
-                </AccordionTrigger>
-                <AccordionContent className="px-4 pb-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="font-semibold">Categorias</h3>
-                    <Button variant="ghost" size="sm" onClick={() => setEditingCategory({name: '', group: 'saida'})}><PlusCircle className="mr-2 h-4 w-4" /> Nova</Button>
-                  </div>
-                  <ul className="space-y-1 text-sm mb-4">
-                    {data.categorias.map((c) => (
-                      <li key={c.id} className="flex items-center justify-between gap-2 p-1 rounded-md hover:bg-slate-50">
-                        <span>{c.name} <span className="text-xs text-slate-500">({c.group})</span></span>
-                         <div className="flex items-center gap-1">
-                            <Button variant="ghost" size="icon" className="h-6 w-6" title="Editar Categoria" onClick={() => setEditingCategory({...c})}><Pencil className="h-3 w-3" /></Button>
-                            <Button variant="ghost" size="icon" className="h-6 w-6" title="Excluir Categoria" onClick={() => askDeleteCategory(c.id)}><Trash className="h-3 w-3" /></Button>
-                         </div>
-                      </li>
-                    ))}
-                  </ul>
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="font-semibold">Subcategorias</h3>
-                    <Button variant="ghost" size="sm" onClick={() => setEditingSubcategory({name: '', categoryId: ''})}><PlusCircle className="mr-2 h-4 w-4" /> Nova</Button>
-                  </div>
-                  <ul className="space-y-1 text-sm">
-                    {data.subcategorias.map((s) => (
-                       <li key={s.id} className="flex items-center justify-between gap-2 p-1 rounded-md hover:bg-slate-50">
-                          <span>{s.name} <span className="text-xs text-slate-500">({catName(data, s.categoryId)})</span></span>
-                           <div className="flex items-center gap-1">
-                              <Button variant="ghost" size="icon" className="h-6 w-6" title="Editar Subcategoria" onClick={() => setEditingSubcategory({...s})}><Pencil className="h-3 w-3" /></Button>
-                              <Button variant="ghost" size="icon" className="h-6 w-6" title="Excluir Subcategoria" onClick={() => askDeleteSubcategory(s.id)}><Trash className="h-3 w-3" /></Button>
-                           </div>
+          <aside className="space-y-8">
+            <section className="bg-white text-slate-900 rounded-2xl shadow-sm border border-gray-100">
+               <Accordion type="single" collapsible className="w-full" defaultValue="item-1">
+                <AccordionItem value="item-1">
+                    <AccordionTrigger className="px-4 py-3 font-semibold hover:no-underline">
+                        <div className="flex items-center gap-2">
+                            <Wallet className="h-4 w-4" /> Contas
+                        </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="px-4 pb-4">
+                        <div className="flex items-center justify-between mb-2">
+                            <h3 className="font-semibold">Suas Contas</h3>
+                            <Button variant="ghost" size="sm" onClick={() => setEditingAccount({ name: '', initialBalance: 0 })}><PlusCircle className="mr-2 h-4 w-4" /> Nova</Button>
+                        </div>
+                        <ul className="space-y-2 text-sm">
+                            {data.accounts.map((acc) => {
+                               const accountBalance = (Number(acc.initialBalance) || 0) + data.entries
+                                 .filter(e => e.accountId === acc.id && e.status === 'paid')
+                                 .reduce((total, entry) => {
+                                   const cat = categoryById(data, entry.categoryId);
+                                   return total + (Number(entry.value) * groupSign(cat?.group));
+                                 }, 0);
+
+                                return (
+                                  <li key={acc.id} className="flex items-center justify-between gap-2 p-1 rounded-md hover:bg-slate-50">
+                                      <div>
+                                          <span className="font-medium">{acc.name}</span>
+                                          <span className={`block text-xs ${config.privacy ? 'blur-sm' : ''}`}>{fmtBRL(accountBalance)}</span>
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                          <Button variant="ghost" size="icon" className="h-6 w-6" title="Editar Conta" onClick={() => setEditingAccount({ ...acc })}><Pencil className="h-3 w-3" /></Button>
+                                          <Button variant="ghost" size="icon" className="h-6 w-6" title="Excluir Conta" onClick={() => askDeleteAccount(acc.id)}><Trash className="h-3 w-3" /></Button>
+                                      </div>
+                                  </li>
+                                )
+                            })}
+                        </ul>
+                        {data.accounts.length === 0 && <p className="text-xs text-slate-500 text-center py-4">Nenhuma conta cadastrada.</p>}
+                    </AccordionContent>
+                </AccordionItem>
+                </Accordion>
+            </section>
+
+            <section className="bg-white text-slate-900 rounded-2xl shadow-sm border border-gray-100">
+                <Accordion type="single" collapsible className="w-full">
+                <AccordionItem value="item-1">
+                    <AccordionTrigger className="px-4 py-3 font-semibold hover:no-underline">
+                    <div className="flex items-center gap-2">
+                        <ChevronsUpDown className="h-4 w-4" />
+                        Gerenciar Categorias e Subcategorias
+                    </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="px-4 pb-4">
+                    <div className="flex items-center justify-between mb-2">
+                        <h3 className="font-semibold">Categorias</h3>
+                        <Button variant="ghost" size="sm" onClick={() => setEditingCategory({name: '', group: 'saida'})}><PlusCircle className="mr-2 h-4 w-4" /> Nova</Button>
+                    </div>
+                    <ul className="space-y-1 text-sm mb-4">
+                        {data.categorias.map((c) => (
+                        <li key={c.id} className="flex items-center justify-between gap-2 p-1 rounded-md hover:bg-slate-50">
+                            <span>{c.name} <span className="text-xs text-slate-500">({c.group})</span></span>
+                            <div className="flex items-center gap-1">
+                                <Button variant="ghost" size="icon" className="h-6 w-6" title="Editar Categoria" onClick={() => setEditingCategory({...c})}><Pencil className="h-3 w-3" /></Button>
+                                <Button variant="ghost" size="icon" className="h-6 w-6" title="Excluir Categoria" onClick={() => askDeleteCategory(c.id)}><Trash className="h-3 w-3" /></Button>
+                            </div>
                         </li>
-                    ))}
-                  </ul>
-                </AccordionContent>
-              </AccordionItem>
-            </Accordion>
-          </section>
+                        ))}
+                    </ul>
+                    <div className="flex items-center justify-between mb-2">
+                        <h3 className="font-semibold">Subcategorias</h3>
+                        <Button variant="ghost" size="sm" onClick={() => setEditingSubcategory({name: '', categoryId: ''})}><PlusCircle className="mr-2 h-4 w-4" /> Nova</Button>
+                    </div>
+                    <ul className="space-y-1 text-sm">
+                        {data.subcategorias.map((s) => (
+                        <li key={s.id} className="flex items-center justify-between gap-2 p-1 rounded-md hover:bg-slate-50">
+                            <span>{s.name} <span className="text-xs text-slate-500">({catName(data, s.categoryId)})</span></span>
+                            <div className="flex items-center gap-1">
+                                <Button variant="ghost" size="icon" className="h-6 w-6" title="Editar Subcategoria" onClick={() => setEditingSubcategory({...s})}><Pencil className="h-3 w-3" /></Button>
+                                <Button variant="ghost" size="icon" className="h-6 w-6" title="Excluir Subcategoria" onClick={() => askDeleteSubcategory(s.id)}><Trash className="h-3 w-3" /></Button>
+                            </div>
+                            </li>
+                        ))}
+                    </ul>
+                    </AccordionContent>
+                </AccordionItem>
+                </Accordion>
+            </section>
+          </aside>
         </div>
       </main>
 
       {/* Modais */}
-      {modal?.type === "confirm" && (
-        <Modal title={modal.payload?.title || "Confirmar"} onClose={() => setModal({ type: null, payload: null })}>
-          <p className="text-slate-700 mb-4">{modal.payload?.message || "Tem certeza?"}</p>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setModal({ type: null, payload: null })}>Cancelar</Button>
-            <Button variant="destructive" onClick={() => modal.payload?.onConfirm?.()}>Confirmar</Button>
-          </div>
-        </Modal>
+      {entryModal.show && (
+         <EntryModal 
+            show={entryModal.show}
+            type={entryModal.type}
+            entry={entryModal.entry}
+            onClose={handleCloseEntryModal}
+            onSave={handleSaveEntry}
+            accounts={data.accounts}
+            categories={data.categorias.filter(c => c.group === entryModal.type)}
+            subcategories={data.subcategorias}
+         />
       )}
 
-      {editingEntry && (
-        <Modal title="Editar lançamento" onClose={() => setEditingEntry(null)}>
-          <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
-            <div className="md:col-span-2">
-              <label className="text-xs text-slate-500">Data</label>
-              <input type="date" className="w-full border rounded-lg px-3 py-2" value={editingEntry.date} onChange={(e) => setEditingEntry((f) => ({ ...f, date: e.target.value }))} />
-            </div>
-            <div className="md:col-span-2">
-              <label className="text-xs text-slate-500">Categoria</label>
-              <select className="w-full border rounded-lg px-3 py-2" value={editingEntry.categoryId} onChange={(e) => handleCategoryChangeForEditingEntry(e.target.value)}>
-                <option value="">Selecione…</option>
-                {data.categorias.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
-            <div className="md:col-span-2">
-              <label className="text-xs text-slate-500">Subcategoria</label>
-              <select className="w-full border rounded-lg px-3 py-2" value={editingEntry.subcategoryId} onChange={(e) => setEditingEntry((f) => ({ ...f, subcategoryId: e.target.value }))}>
-                <option value="">Selecione…</option>
-                {subOptionsFor(editingEntry.categoryId).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </div>
-            <div className="md:col-span-2">
-              <label className="text-xs text-slate-500">Valor</label>
-              <input type="number" min="0" step="0.01" className="w-full border rounded-lg px-3 py-2" value={editingEntry.value} onChange={(e) => setEditingEntry((f) => ({ ...f, value: e.target.value }))} />
-            </div>
-            <div className="md:col-span-4">
-              <label className="text-xs text-slate-500">Descrição</label>
-              <input className="w-full border rounded-lg px-3 py-2" value={editingEntry.description} onChange={(e) => setEditingEntry((f) => ({ ...f, description: e.target.value }))} />
-            </div>
-            <div className="md:col-span-6 flex justify-end gap-2 mt-2">
-              <Button variant="outline" onClick={() => setEditingEntry(null)}>Cancelar</Button>
-              <Button onClick={saveEditEntry}>Salvar</Button>
-            </div>
-          </div>
-        </Modal>
-      )}
+      <Modal title={modal.payload?.title || "Confirmar"} show={modal.show && modal.type === 'confirm'} onClose={() => setModal({ ...modal, show: false })}>
+        <p className="text-slate-700 mb-4">{modal.payload?.message || "Tem certeza?"}</p>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={() => setModal({ ...modal, show: false })}>Cancelar</Button>
+          <Button variant="destructive" onClick={() => modal.payload?.onConfirm?.()}>Confirmar</Button>
+        </div>
+      </Modal>
 
       {editingCategory && (
-        <Modal title={editingCategory.id ? "Editar Categoria" : "Nova Categoria"} onClose={() => setEditingCategory(null)}>
+        <Modal title={editingCategory.id ? "Editar Categoria" : "Nova Categoria"} show={!!editingCategory} onClose={() => setEditingCategory(null)}>
           <div className="space-y-4">
               <div>
                 <label className="text-xs text-slate-500">Nome da Categoria</label>
@@ -1018,9 +1154,28 @@ export default function App() {
           </div>
         </Modal>
       )}
+      
+       {editingAccount && (
+            <Modal title={editingAccount.id ? "Editar Conta" : "Nova Conta"} show={!!editingAccount} onClose={() => setEditingAccount(null)}>
+                <div className="space-y-4">
+                    <div>
+                        <label className="text-xs text-slate-500">Nome da Conta</label>
+                        <input className="w-full border rounded-lg px-3 py-2" value={editingAccount.name} onChange={(e) => setEditingAccount(c => ({ ...c, name: e.target.value }))} />
+                    </div>
+                    <div>
+                        <label className="text-xs text-slate-500">Saldo Inicial</label>
+                        <input type="number" step="0.01" className="w-full border rounded-lg px-3 py-2" value={editingAccount.initialBalance} onChange={(e) => setEditingAccount(c => ({ ...c, initialBalance: e.target.value }))} />
+                    </div>
+                    <div className="flex justify-end gap-2 mt-2">
+                        <Button variant="outline" onClick={() => setEditingAccount(null)}>Cancelar</Button>
+                        <Button onClick={saveAccount}>Salvar</Button>
+                    </div>
+                </div>
+            </Modal>
+        )}
 
       {editingSubcategory && (
-        <Modal title={editingSubcategory.id ? "Editar Subcategoria" : "Nova Subcategoria"} onClose={() => setEditingSubcategory(null)}>
+        <Modal title={editingSubcategory.id ? "Editar Subcategoria" : "Nova Subcategoria"} show={!!editingSubcategory} onClose={() => setEditingSubcategory(null)}>
           <div className="space-y-4">
               <div>
                 <label className="text-xs text-slate-500">Nome da Subcategoria</label>
@@ -1042,7 +1197,7 @@ export default function App() {
       )}
 
       {editingProfile && (
-        <Modal title="Editar Perfil" onClose={() => setEditingProfile(false)}>
+        <Modal title="Editar Perfil" show={editingProfile} onClose={() => setEditingProfile(false)}>
             <div className="space-y-4">
                 <div>
                     <label className="text-xs text-slate-500">Nome do Perfil</label>
@@ -1077,3 +1232,147 @@ export default function App() {
     </div>
   );
 }
+
+
+function EntryModal({ show, type, entry, onClose, onSave, accounts, categories, subcategories }) {
+  const [form, setForm] = useState({
+      value: '',
+      date: format(new Date(), 'yyyy-MM-dd'),
+      accountId: '',
+      categoryId: '',
+      subcategoryId: '',
+      description: '',
+      status: 'paid',
+  });
+  const [repeat, setRepeat] = useState(false);
+  const [installments, setInstallments] = useState(1);
+
+  useEffect(() => {
+    if (entry) {
+        setForm({
+            ...entry,
+            value: entry.value.toString(),
+        });
+    } else {
+        const defaultCategory = categories[0]?.id || '';
+        const defaultAccount = accounts[0]?.id || '';
+        setForm({
+            value: '',
+            date: format(new Date(), 'yyyy-MM-dd'),
+            accountId: defaultAccount,
+            categoryId: defaultCategory,
+            subcategoryId: '',
+            description: '',
+            status: type === 'entrada' ? 'paid' : 'pending',
+        });
+    }
+  }, [entry, show, categories, accounts, type]);
+
+
+  const handleCategoryChange = (catId) => {
+    setForm(f => ({ ...f, categoryId: catId, subcategoryId: '' }));
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!form.value || !form.accountId || !form.categoryId) {
+        // Simple validation
+        alert("Valor, Conta e Categoria são obrigatórios.");
+        return;
+    }
+    const dataToSave = {
+        ...form,
+        value: parseFloat(form.value),
+        group: type,
+        id: entry?.id // Keep id if editing
+    };
+    onSave(dataToSave, entry ? 1 : installments);
+  };
+  
+  const subOptions = useMemo(() => {
+    if (!form.categoryId) return [];
+    return subcategories.filter(s => s.categoryId === form.categoryId);
+  }, [form.categoryId, subcategories]);
+
+  const title = entry ? `Editar ${type === 'entrada' ? 'Receita' : 'Despesa'}` : `Nova ${type === 'entrada' ? 'Receita' : 'Despesa'}`;
+
+  return (
+    <Modal show={show} onClose={onClose} title={title}>
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            <div className="text-center">
+                <span className={`text-sm ${type === 'entrada' ? 'text-emerald-500' : 'text-red-500'}`}>
+                    Valor da {type === 'entrada' ? 'Receita' : 'Despesa'}
+                </span>
+                <input
+                    type="number"
+                    step="0.01"
+                    placeholder="R$ 0,00"
+                    className={`w-full text-center bg-transparent border-none text-4xl font-bold focus:ring-0 ${type === 'entrada' ? 'text-emerald-500' : 'text-red-500'}`}
+                    value={form.value}
+                    onChange={e => setForm(f => ({ ...f, value: e.target.value }))}
+                />
+            </div>
+            
+            <div className="flex items-center justify-between p-2 bg-slate-100 rounded-lg">
+                <label className="font-medium">{type === 'entrada' ? 'Recebido' : 'Pago'}</label>
+                 <Switch checked={form.status === 'paid'} onCheckedChange={(checked) => setForm(f => ({...f, status: checked ? 'paid' : 'pending'}))} />
+            </div>
+
+            <div className="space-y-2">
+                <label className="text-sm font-medium">Data</label>
+                <div className="grid grid-cols-3 gap-2">
+                    <Button type="button" variant={form.date === format(new Date(), 'yyyy-MM-dd') ? 'secondary' : 'outline'} onClick={() => setForm(f => ({...f, date: format(new Date(), 'yyyy-MM-dd')}))}>Hoje</Button>
+                    <Button type="button" variant={form.date === format(subDays(new Date(), 1), 'yyyy-MM-dd') ? 'secondary' : 'outline'} onClick={() => setForm(f => ({...f, date: format(subDays(new Date(), 1), 'yyyy-MM-dd')}))}>Ontem</Button>
+                    <input type="date" className="border rounded-lg px-3 py-2" value={form.date} onChange={e => setForm(f => ({...f, date: e.target.value}))} />
+                </div>
+            </div>
+            
+            <div className="space-y-2">
+                <label className="text-sm font-medium">Descrição</label>
+                <input className="w-full border rounded-lg px-3 py-2" placeholder="Ex: Salário, Aluguel" value={form.description} onChange={e => setForm(f => ({...f, description: e.target.value}))}/>
+            </div>
+            
+            <div className="space-y-2">
+                 <label className="text-sm font-medium">Categoria</label>
+                 <select className="w-full border rounded-lg px-3 py-2" value={form.categoryId} onChange={e => handleCategoryChange(e.target.value)}>
+                    <option value="">Selecione...</option>
+                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                 </select>
+                 {subOptions.length > 0 && (
+                     <select className="w-full border rounded-lg px-3 py-2 mt-2" value={form.subcategoryId} onChange={e => setForm(f => ({...f, subcategoryId: e.target.value}))}>
+                         <option value="">Selecione subcategoria...</option>
+                         {subOptions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                     </select>
+                 )}
+            </div>
+
+             <div className="space-y-2">
+                <label className="text-sm font-medium">Conta</label>
+                 <select className="w-full border rounded-lg px-3 py-2" value={form.accountId} onChange={e => setForm(f => ({...f, accountId: e.target.value}))}>
+                     {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                 </select>
+            </div>
+            
+            {!entry && (
+                 <div className="flex items-center justify-between p-2 bg-slate-100 rounded-lg">
+                    <label className="font-medium">Repetir / Parcelar</label>
+                     <Switch checked={repeat} onCheckedChange={setRepeat} />
+                </div>
+            )}
+
+            {repeat && !entry && (
+                 <div className="space-y-2">
+                     <label className="text-sm font-medium">Número de Parcelas</label>
+                     <input type="number" min="2" max="120" className="w-full border rounded-lg px-3 py-2" value={installments} onChange={e => setInstallments(parseInt(e.target.value, 10))} />
+                 </div>
+            )}
+            
+            <div className="flex justify-end gap-2 mt-4">
+                <Button type="button" variant="outline" onClick={onClose}>Cancelar</Button>
+                <Button type="submit">Salvar</Button>
+            </div>
+        </form>
+    </Modal>
+  )
+}
+
