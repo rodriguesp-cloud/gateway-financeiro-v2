@@ -399,6 +399,12 @@ export default function App() {
         value: kpis[metric] || 0
     }));
   }, [activeMetrics, kpis]);
+  
+  const profitMargin = useMemo(() => {
+    if (kpis.Entradas === 0) return 0;
+    return (kpis.Resultado / kpis.Entradas) * 100;
+  }, [kpis.Resultado, kpis.Entradas]);
+
 
   const animatedTotalBalance = useCountUp(kpis["Saldo Total Atual"], 1500);
 
@@ -811,7 +817,7 @@ export default function App() {
       {/* Hero */}
       <div className={currentTheme.hero}>
         <div className="max-w-7xl mx-auto px-6 py-8">
-          <p className="text-xs italic text-white/70 mb-2">Gestor Financeiro App V3.0</p>
+          <p className="text-xs italic text-white/70 mb-2">Gestor Financeiro App V2.0</p>
           <div className="flex items-end justify-between flex-wrap gap-4">
             <div className="flex items-center gap-4">
               <div>
@@ -851,7 +857,18 @@ export default function App() {
             <input className="w-full md:max-w-sm border rounded-lg px-3 py-2" placeholder="Buscar por descrição, categoria ou subcategoria" value={search} onChange={(e) => setSearch(e.target.value)} />
             {search && <button className="text-sm text-slate-600 hover:underline" onClick={() => setSearch("")}>limpar</button>}
           </div>
-          <div className="text-sm text-slate-500">Resultado do período: <span className={`${kpis.Resultado < 0 ? "text-red-600" : "text-emerald-600"} font-semibold ${config.privacy ? 'blur-sm' : ''}`}>{fmtBRL(kpis.Resultado)}</span></div>
+          <div className="text-sm text-slate-500 text-right">
+            <div>
+                Resultado do período: <span className={`${kpis.Resultado < 0 ? "text-red-600" : "text-emerald-600"} font-semibold ${config.privacy ? 'blur-sm' : ''}`}>{fmtBRL(kpis.Resultado)}</span>
+            </div>
+             <div className="text-xs flex items-center justify-end gap-1">
+                Margem de Lucro:
+                <span className={profitMargin >= 0 ? "text-emerald-600" : "text-red-600"}>
+                    {profitMargin >= 0 ? <ArrowUp className="inline h-3 w-3" /> : <ArrowDown className="inline h-3 w-3" />}
+                    {profitMargin.toFixed(2)}%
+                </span>
+            </div>
+          </div>
         </div>
 
         <section className="bg-white text-slate-900 rounded-2xl shadow-sm border border-gray-100 p-4 mb-8">
@@ -881,7 +898,7 @@ export default function App() {
             </div>
             <div ref={chartRef} className={`w-full h-72 ${config.privacy ? 'blur-sm' : ''}`}>
                 <ResponsiveContainer width="100%" height="100%">
-                {chartType === 'line' && (
+                {chartType === 'line' ? (
                     <RechartsLineChart data={series} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="date" />
@@ -892,8 +909,7 @@ export default function App() {
                         <Line key={metric} type="monotone" dataKey={metric} stroke={metricColors[metric]} strokeWidth={2} dot={false} />
                         ))}
                     </RechartsLineChart>
-                )}
-                {chartType === 'bar' && (
+                ) : chartType === 'bar' ? (
                     <BarChart data={summaryData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="name" />
@@ -905,8 +921,7 @@ export default function App() {
                             ))}
                         </Bar>
                     </BarChart>
-                )}
-                {chartType === 'pie' && (
+                ) : (
                     <PieChart>
                          <Tooltip formatter={(value, name) => [fmtBRL(value), name]} />
                          <Legend />
@@ -1375,4 +1390,3 @@ function EntryModal({ show, type, entry, onClose, onSave, accounts, categories, 
     </Modal>
   )
 }
-
