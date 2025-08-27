@@ -24,7 +24,7 @@ import {
   Pie,
   Cell,
 } from "recharts";
-import { Check, ChevronDown, Pencil, Trash, PlusCircle, ChevronsUpDown, Eye, EyeOff, FileDown, LogOut, User as UserIcon, Wallet, LineChart as LineChartIcon, BarChart3, PieChart as PieChartIcon, CheckCircle2, Circle, ArrowDown, ArrowUp } from "lucide-react";
+import { Check, ChevronDown, Pencil, Trash, PlusCircle, ChevronsUpDown, Eye, EyeOff, FileDown, LogOut, User as UserIcon, Wallet, LineChart as LineChartIcon, BarChart3, PieChart as PieChartIcon, CheckCircle2, Circle, ArrowDown, ArrowUp, ShieldCheck } from "lucide-react";
 import { DatePickerWithPresets } from "@/components/DatePickerWithPresets";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent, DropdownMenuGroup } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
@@ -355,6 +355,7 @@ export default function App() {
   const [profileTheme, setProfileTheme] = useState("default");
   
   const [editingAccount, setEditingAccount] = useState(null);
+  const [auditingAccount, setAuditingAccount] = useState(null);
   
   const [chartType, setChartType] = useState('line');
 
@@ -669,6 +670,28 @@ export default function App() {
         });
     };
 
+    const handleAuditAccount = async (accountId, correctBalance) => {
+        if (!service) return;
+
+        const allEntriesForAccount = data.entries.filter(e => e.accountId === accountId && e.status === 'paid');
+        const sumOfEntries = allEntriesForAccount.reduce((total, entry) => {
+            const cat = categoryById(data, entry.categoryId);
+            return total + (Number(entry.value) * groupSign(cat?.group));
+        }, 0);
+
+        const newInitialBalance = correctBalance - sumOfEntries;
+
+        const accountToUpdate = data.accounts.find(acc => acc.id === accountId);
+
+        if (accountToUpdate) {
+            await service.updateAccount(accountId, { ...accountToUpdate, initialBalance: newInitialBalance });
+            setAuditingAccount(null);
+            showToast("Saldo da conta auditado com sucesso!", "success");
+        } else {
+            showToast("Erro: Conta não encontrada.", "error");
+        }
+    };
+
 
   const handleDownloadPdf = async () => {
     const chartElement = chartRef.current;
@@ -953,7 +976,7 @@ export default function App() {
                   <Button onClick={() => handleOpenEntryModal('entrada')} className="bg-emerald-500 hover:bg-emerald-600 text-white">
                       <ArrowUp className="mr-2 h-4 w-4" /> Nova Receita
                   </Button>
-                  <Button onClick={() => handleOpenEntryModal('saida')} className="bg-red-500 hover:bg-red-600 text-white">
+                  <Button onClick={() => handleOpenEntryModal('saida')} className="bg-red-500 hover:bg-red-500 text-white">
                       <ArrowDown className="mr-2 h-4 w-4" /> Nova Despesa
                   </Button>
               </div>
@@ -1065,6 +1088,9 @@ export default function App() {
                                           <span className={`block text-xs ${config.privacy ? 'blur-sm' : ''}`}>{fmtBRL(accountBalance)}</span>
                                       </div>
                                       <div className="flex items-center gap-1">
+                                          <Button variant="ghost" size="icon" className="h-6 w-6" title="Auditar Saldo" onClick={() => setAuditingAccount({ ...acc, currentBalance: accountBalance })}>
+                                            <ShieldCheck className="h-4 w-4 text-blue-600" />
+                                          </Button>
                                           <Button variant="ghost" size="icon" className="h-6 w-6" title="Editar Conta" onClick={() => setEditingAccount({ ...acc })}><Pencil className="h-3 w-3" /></Button>
                                           <Button variant="ghost" size="icon" className="h-6 w-6" title="Excluir Conta" onClick={() => askDeleteAccount(acc.id)}><Trash className="h-3 w-3" /></Button>
                                       </div>
@@ -1147,6 +1173,15 @@ export default function App() {
           <Button variant="destructive" onClick={() => modal.payload?.onConfirm?.()}>Confirmar</Button>
         </div>
       </Modal>
+      
+      {auditingAccount && (
+        <AuditModal
+          account={auditingAccount}
+          show={!!auditingAccount}
+          onClose={() => setAuditingAccount(null)}
+          onSave={handleAuditAccount}
+        />
+      )}
 
       {editingCategory && (
         <Modal title={editingCategory.id ? "Editar Categoria" : "Nova Categoria"} show={!!editingCategory} onClose={() => setEditingCategory(null)}>
@@ -1390,3 +1425,55 @@ function EntryModal({ show, type, entry, onClose, onSave, accounts, categories, 
     </Modal>
   )
 }
+
+function AuditModal({ account, show, onClose, onSave }) {
+    const [correctBalance, setCorrectBalance] = useState('');
+
+    useEffect(() => {
+        if (account) {
+            setCorrectBalance(account.currentBalance.toString());
+        }
+    }, [account]);
+
+    const handleSubmit = (e) => {
+        e.preventDefault();
+        const balanceValue = parseFloat(correctBalance);
+        if (isNaN(balanceValue)) {
+            alert("Por favor, insira um valor numérico válido.");
+            return;
+        }
+        onSave(account.id, balanceValue);
+    };
+
+    if (!account) return null;
+
+    return (
+        <Modal show={show} onClose={onClose} title={`Auditar Saldo de "${account.name}"`}>
+            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+                <div>
+                    <label htmlFor="correct-balance" className="text-sm font-medium text-slate-700">
+                        Qual o saldo correto atual desta conta?
+                    </label>
+                    <p className="text-xs text-slate-500 mb-2">
+                        O sistema irá calcular e ajustar o saldo inicial para que o valor final corresponda ao que você informar aqui.
+                    </p>
+                    <input
+                        id="correct-balance"
+                        type="number"
+                        step="0.01"
+                        placeholder="R$ 0,00"
+                        className="w-full border rounded-lg px-3 py-2 text-lg"
+                        value={correctBalance}
+                        onChange={e => setCorrectBalance(e.target.value)}
+                        autoFocus
+                    />
+                </div>
+                <div className="flex justify-end gap-2 mt-4">
+                    <Button type="button" variant="outline" onClick={onClose}>Cancelar</Button>
+                    <Button type="submit">Salvar Ajuste</Button>
+                </div>
+            </form>
+        </Modal>
+    );
+}
+
