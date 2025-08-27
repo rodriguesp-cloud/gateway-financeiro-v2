@@ -83,8 +83,14 @@ export function useFirestore(userId: string | undefined) {
         if (hydratedConfig.dateRange?.from && typeof hydratedConfig.dateRange.from.toDate === 'function') {
           hydratedConfig.dateRange.from = hydratedConfig.dateRange.from.toDate();
         }
+         if (hydratedConfig.dateRange?.from && !(hydratedConfig.dateRange.from instanceof Date)) {
+            hydratedConfig.dateRange.from = new Date(hydratedConfig.dateRange.from);
+        }
         if (hydratedConfig.dateRange?.to && typeof hydratedConfig.dateRange.to.toDate === 'function') {
           hydratedConfig.dateRange.to = hydratedConfig.dateRange.to.toDate();
+        }
+        if (hydratedConfig.dateRange?.to && !(hydratedConfig.dateRange.to instanceof Date)) {
+            hydratedConfig.dateRange.to = new Date(hydratedConfig.dateRange.to);
         }
         setConfigState(prev => ({ ...prev, ...hydratedConfig }));
       }
