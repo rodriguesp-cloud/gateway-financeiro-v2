@@ -24,7 +24,7 @@ import {
   Pie,
   Cell,
 } from "recharts";
-import { Check, ChevronDown, Pencil, Trash, PlusCircle, ChevronsUpDown, Eye, EyeOff, FileDown, LogOut, User as UserIcon, Wallet, LineChart as LineChartIcon, BarChart3, PieChart as PieChartIcon, CheckCircle2, Circle, ArrowDown, ArrowUp, ShieldCheck } from "lucide-react";
+import { Check, ChevronDown, Pencil, Trash, PlusCircle, ChevronsUpDown, Eye, EyeOff, FileDown, LogOut, User as UserIcon, Wallet, LineChart as LineChartIcon, BarChart3, PieChart as PieChartIcon, CheckCircle2, Circle, ArrowDown, ArrowUp, ShieldCheck, ArrowRightLeft } from "lucide-react";
 import { DatePickerWithPresets } from "@/components/DatePickerWithPresets";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent, DropdownMenuGroup } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
@@ -64,19 +64,15 @@ const entriesInDateRange = (entries, range) => {
   if (!range?.from) {
     return entries;
   }
-
   const from = startOfDay(new Date(range.from));
   const to = new Date(range.to || range.from);
   to.setHours(23, 59, 59, 999);
 
   return entries.filter((e) => {
     if (!e.date) return false;
-    
-    // Split the date string and create a Date object in the user's local timezone
     const parts = e.date.split('-').map(part => parseInt(part, 10));
     const entryDate = new Date(parts[0], parts[1] - 1, parts[2]);
-    entryDate.setHours(0, 0, 0, 0); // Normalize to the beginning of the day
-
+    entryDate.setHours(0, 0, 0, 0); 
     return entryDate >= from && entryDate <= to;
   });
 };
@@ -92,6 +88,8 @@ const computeKpisForRange = (data, range) => {
       if (e.status !== 'paid') continue;
       const cat = categoryById(data, e.categoryId);
       if (!cat) continue;
+      // Skip transfer categories from total balance calculation based on all entries
+      if (cat.name === 'Transferência | Saída' || cat.name === 'Transferência | Entrada') continue;
       const s = Number(e.value) || 0;
       totalBalance += s * groupSign(cat.group);
   }
@@ -108,6 +106,9 @@ const computeKpisForRange = (data, range) => {
     const cat = categoryById(data, e.categoryId);
     const sub = subcatById(data, e.subcategoryId);
     if (!cat) continue;
+    
+    // Skip transfer categories from KPI calculations for the range
+    if (cat.name === 'Transferência | Saída' || cat.name === 'Transferência | Entrada') continue;
     
     const s = Number(e.value) || 0;
     const sign = groupSign(cat.group);
@@ -155,6 +156,8 @@ const buildSeriesForRange = (data, range) => {
         const cat = categoryById(data, e.categoryId);
         const sub = subcatById(data, e.subcategoryId);
         if (!cat) continue;
+
+        if (cat.name === 'Transferência | Saída' || cat.name === 'Transferência | Entrada') continue;
         
         const value = Number(e.value) || 0; 
         const sign = groupSign(cat.group);
@@ -347,6 +350,7 @@ export default function App() {
   
   const [modal, setModal] = useState({ type: null, payload: null, show: false });
   const [entryModal, setEntryModal] = useState({ show: false, type: 'saida', entry: null });
+  const [transferModal, setTransferModal] = useState({ show: false });
 
   const [editingCategory, setEditingCategory] = useState(null);
   const [editingSubcategory, setEditingSubcategory] = useState(null);
@@ -411,11 +415,13 @@ export default function App() {
 
   const metricOptions = useMemo(() => {
     const baseMetrics = ["Entradas", "Saidas", "Resultado", "Saldo Total Atual"];
-    const categoryMetrics = data.categorias.map(cat => ({
-      name: cat.name,
-      subcategories: data.subcategorias
-        .filter(sub => sub.categoryId === cat.id)
-        .map(sub => ({ name: sub.name, fullName: getSubcatMetricName(cat.name, sub.name) }))
+    const categoryMetrics = data.categorias
+      .filter(c => c.name !== 'Transferência | Saída' && c.name !== 'Transferência | Entrada')
+      .map(cat => ({
+        name: cat.name,
+        subcategories: data.subcategorias
+          .filter(sub => sub.categoryId === cat.id)
+          .map(sub => ({ name: sub.name, fullName: getSubcatMetricName(cat.name, sub.name) }))
     }));
     return [...baseMetrics, ...categoryMetrics];
   }, [data.categorias, data.subcategorias]);
@@ -534,6 +540,61 @@ export default function App() {
         showToast("Erro ao salvar lançamento.", "error");
     }
   };
+
+    const handleSaveTransfer = async (transferData) => {
+        try {
+            const { value, date, originAccountId, destinationAccountId, description } = transferData;
+            const originAccountName = accountName(data, originAccountId);
+            const destinationAccountName = accountName(data, destinationAccountId);
+
+            // Ensure special transfer categories exist
+            let saidaCat = data.categorias.find(c => c.name === 'Transferência | Saída');
+            if (!saidaCat) {
+                saidaCat = { id: uid(), name: 'Transferência | Saída', group: 'saida' };
+                await service.addCategoria(saidaCat);
+            }
+            let entradaCat = data.categorias.find(c => c.name === 'Transferência | Entrada');
+            if (!entradaCat) {
+                entradaCat = { id: uid(), name: 'Transferência | Entrada', group: 'entrada' };
+                await service.addCategoria(entradaCat);
+            }
+
+            const batch = [];
+            
+            // Lançamento de SAÍDA
+            const saidaEntry = {
+                id: uid(),
+                value: value,
+                date: date,
+                accountId: originAccountId,
+                categoryId: saidaCat.id,
+                description: `Transf. para ${destinationAccountName}${description ? `: ${description}`: ''}`,
+                status: 'paid',
+                yearMonth: format(new Date(date), 'yyyy-MM'),
+            };
+            batch.push(saidaEntry);
+
+            // Lançamento de ENTRADA
+            const entradaEntry = {
+                id: uid(),
+                value: value,
+                date: date,
+                accountId: destinationAccountId,
+                categoryId: entradaCat.id,
+                description: `Transf. de ${originAccountName}${description ? `: ${description}`: ''}`,
+                status: 'paid',
+                yearMonth: format(new Date(date), 'yyyy-MM'),
+            };
+            batch.push(entradaEntry);
+
+            await service.addBatchEntries(batch);
+            showToast("Transferência realizada com sucesso!", "success");
+            setTransferModal({ show: false });
+        } catch (error) {
+            console.error("Failed to save transfer:", error);
+            showToast("Erro ao realizar transferência.", "error");
+        }
+    };
   
   const handleToggleEntryStatus = async (entry) => {
     const newStatus = entry.status === 'paid' ? 'pending' : 'paid';
@@ -574,6 +635,9 @@ export default function App() {
   };
 
   const askDeleteCategory = (catId) => {
+    if (catName(data, catId).includes('Transferência')) {
+        return showToast("Categorias de transferência não podem ser excluídas.", "error", 4000);
+    }
     const subs = data.subcategorias.filter(s => s.categoryId === catId);
     const ents = data.entries.filter(e => e.categoryId === catId);
     if (subs.length > 0 || ents.length > 0) {
@@ -973,6 +1037,9 @@ export default function App() {
           <section className="bg-white text-slate-900 rounded-2xl shadow-sm border border-gray-100 p-4 lg:col-span-2">
             <h2 className="font-semibold tracking-tight mb-4">Lançamentos</h2>
               <div className="flex justify-end gap-2 mb-4">
+                  <Button onClick={() => setTransferModal({ show: true })} className="bg-blue-500 hover:bg-blue-600 text-white">
+                      <ArrowRightLeft className="mr-2 h-4 w-4" /> Transferência
+                  </Button>
                   <Button onClick={() => handleOpenEntryModal('entrada')} className="bg-emerald-500 hover:bg-emerald-600 text-white">
                       <ArrowUp className="mr-2 h-4 w-4" /> Nova Receita
                   </Button>
@@ -987,7 +1054,7 @@ export default function App() {
                 <label className="text-xs text-slate-500">Filtrar por categoria</label>
                 <select className="border rounded-lg px-3 py-2" value={filterCat} onChange={(e) => handleFilterCategoryChange(e.target.value)}>
                   <option value="">Todas</option>
-                  {data.categorias.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  {data.categorias.filter(c => !c.name.includes('Transferência')).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
               <div>
@@ -1027,6 +1094,7 @@ export default function App() {
                               size="icon" 
                               title={e.status === 'paid' ? 'Marcado como pago' : 'Marcar como pago'}
                               onClick={() => handleToggleEntryStatus(e)}
+                              disabled={cat?.name.includes('Transferência')}
                             >
                               {e.status === 'paid' ? <CheckCircle2 className="text-emerald-500" /> : <Circle className="text-slate-400" />}
                             </Button>
@@ -1038,12 +1106,16 @@ export default function App() {
                         <td className="py-2 pr-3">{e.description}</td>
                         <td className={`py-2 pr-3 text-right ${signed < 0 ? "text-red-600" : "text-emerald-700"} ${config.privacy ? 'blur-sm' : ''}`}>{fmtBRL(signed)}</td>
                         <td className="py-2 flex items-center gap-2">
-                          <Button variant="outline" size="icon" title="Editar" onClick={() => handleOpenEntryModal(cat.group, e)}>
-                            <Pencil />
-                          </Button>
-                          <Button variant="outline" size="icon" title="Excluir" onClick={() => askDeleteEntry(e.id)}>
-                            <Trash />
-                          </Button>
+                           {!cat?.name.includes('Transferência') && (
+                            <>
+                              <Button variant="outline" size="icon" title="Editar" onClick={() => handleOpenEntryModal(cat.group, e)}>
+                                <Pencil />
+                              </Button>
+                              <Button variant="outline" size="icon" title="Excluir" onClick={() => askDeleteEntry(e.id)}>
+                                <Trash />
+                              </Button>
+                            </>
+                           )}
                         </td>
                       </tr>
                     );
@@ -1119,7 +1191,7 @@ export default function App() {
                         <Button variant="ghost" size="sm" onClick={() => setEditingCategory({name: '', group: 'saida'})}><PlusCircle className="mr-2 h-4 w-4" /> Nova</Button>
                     </div>
                     <ul className="space-y-1 text-sm mb-4">
-                        {data.categorias.map((c) => (
+                        {data.categorias.filter(c => !c.name.includes('Transferência')).map((c) => (
                         <li key={c.id} className="flex items-center justify-between gap-2 p-1 rounded-md hover:bg-slate-50">
                             <span>{c.name} <span className="text-xs text-slate-500">({c.group})</span></span>
                             <div className="flex items-center gap-1">
@@ -1161,9 +1233,18 @@ export default function App() {
             onClose={handleCloseEntryModal}
             onSave={handleSaveEntry}
             accounts={data.accounts}
-            categories={data.categorias.filter(c => c.group === entryModal.type)}
+            categories={data.categorias.filter(c => c.group === entryModal.type && !c.name.includes('Transferência'))}
             subcategories={data.subcategorias}
          />
+      )}
+
+      {transferModal.show && (
+          <TransferModal
+              show={transferModal.show}
+              onClose={() => setTransferModal({ show: false })}
+              onSave={handleSaveTransfer}
+              accounts={data.accounts}
+          />
       )}
 
       <Modal title={modal.payload?.title || "Confirmar"} show={modal.show && modal.type === 'confirm'} onClose={() => setModal({ ...modal, show: false })}>
@@ -1426,6 +1507,90 @@ function EntryModal({ show, type, entry, onClose, onSave, accounts, categories, 
   )
 }
 
+function TransferModal({ show, onClose, onSave, accounts }) {
+    const [form, setForm] = useState({
+        value: '',
+        date: format(new Date(), 'yyyy-MM-dd'),
+        originAccountId: '',
+        destinationAccountId: '',
+        description: '',
+    });
+
+    useEffect(() => {
+        if (show && accounts.length > 1) {
+            setForm(f => ({
+                ...f,
+                originAccountId: accounts[0].id,
+                destinationAccountId: accounts[1].id,
+            }));
+        }
+    }, [show, accounts]);
+
+    const handleSubmit = (e) => {
+        e.preventDefault();
+        const { value, originAccountId, destinationAccountId } = form;
+        if (!value || !originAccountId || !destinationAccountId) {
+            alert("Valor, conta de origem e conta de destino são obrigatórios.");
+            return;
+        }
+        if (originAccountId === destinationAccountId) {
+            alert("A conta de origem e destino não podem ser a mesma.");
+            return;
+        }
+        onSave({ ...form, value: parseFloat(form.value) });
+    };
+    
+    return (
+        <Modal show={show} onClose={onClose} title="Nova Transferência">
+            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+                <div className="text-center">
+                    <span className="text-sm text-blue-500">Valor da Transferência</span>
+                    <input
+                        type="number"
+                        step="0.01"
+                        placeholder="R$ 0,00"
+                        className="w-full text-center bg-transparent border-none text-4xl font-bold focus:ring-0 text-blue-500"
+                        value={form.value}
+                        onChange={e => setForm(f => ({ ...f, value: e.target.value }))}
+                        autoFocus
+                    />
+                </div>
+                
+                <div className="space-y-2">
+                    <label className="text-sm font-medium">Data</label>
+                    <input type="date" className="w-full border rounded-lg px-3 py-2" value={form.date} onChange={e => setForm(f => ({...f, date: e.target.value}))} />
+                </div>
+                
+                <div className="space-y-2">
+                    <label className="text-sm font-medium">De</label>
+                    <select className="w-full border rounded-lg px-3 py-2" value={form.originAccountId} onChange={e => setForm(f => ({...f, originAccountId: e.target.value}))}>
+                        <option value="" disabled>Conta de Origem</option>
+                        {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                    </select>
+                </div>
+
+                <div className="space-y-2">
+                    <label className="text-sm font-medium">Para</label>
+                    <select className="w-full border rounded-lg px-3 py-2" value={form.destinationAccountId} onChange={e => setForm(f => ({...f, destinationAccountId: e.target.value}))}>
+                        <option value="" disabled>Conta de Destino</option>
+                        {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                    </select>
+                </div>
+
+                <div className="space-y-2">
+                    <label className="text-sm font-medium">Descrição (Opcional)</label>
+                    <input className="w-full border rounded-lg px-3 py-2" placeholder="Ex: Pagamento de fatura" value={form.description} onChange={e => setForm(f => ({...f, description: e.target.value}))}/>
+                </div>
+                
+                <div className="flex justify-end gap-2 mt-4">
+                    <Button type="button" variant="outline" onClick={onClose}>Cancelar</Button>
+                    <Button type="submit">Salvar Transferência</Button>
+                </div>
+            </form>
+        </Modal>
+    )
+}
+
 function AuditModal({ account, show, onClose, onSave }) {
     const [correctBalance, setCorrectBalance] = useState('');
 
@@ -1476,4 +1641,5 @@ function AuditModal({ account, show, onClose, onSave }) {
         </Modal>
     );
 }
+
 
