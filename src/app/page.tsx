@@ -451,6 +451,7 @@ export default function App() {
 
   const availableSubcategoriesForFilter = useMemo(() => {
     if (!filterCat) return [];
+    if (filterCat === 'entradas' || filterCat === 'saidas' || filterCat === 'transferencias') return [];
     return data.subcategorias.filter((s) => s.categoryId === filterCat);
   }, [data.subcategorias, filterCat]);
 
@@ -470,7 +471,15 @@ export default function App() {
     }
     
     if (filterCat) {
-      list = list.filter((e) => e.categoryId === filterCat);
+        if (filterCat === 'entradas') {
+            list = list.filter(e => categoryById(data, e.categoryId)?.group === 'entrada' && !catName(data, e.categoryId).includes('Transferência'));
+        } else if (filterCat === 'saidas') {
+            list = list.filter(e => categoryById(data, e.categoryId)?.group === 'saida' && !catName(data, e.categoryId).includes('Transferência'));
+        } else if (filterCat === 'transferencias') {
+            list = list.filter(e => catName(data, e.categoryId).includes('Transferência'));
+        } else {
+            list = list.filter((e) => e.categoryId === filterCat);
+        }
     }
     
     if (filterSub && filterCat) {
@@ -1052,14 +1061,22 @@ export default function App() {
             <div className="flex flex-wrap items-end gap-3 mb-3">
               <div>
                 <label className="text-xs text-slate-500">Filtrar por categoria</label>
-                <select className="border rounded-lg px-3 py-2" value={filterCat} onChange={(e) => handleFilterCategoryChange(e.target.value)}>
-                  <option value="">Todas</option>
-                  {data.categorias.filter(c => !c.name.includes('Transferência')).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                 <select className="border rounded-lg px-3 py-2" value={filterCat} onChange={(e) => handleFilterCategoryChange(e.target.value)}>
+                    <option value="">Todas</option>
+                    <option value="entradas">Todas as Receitas</option>
+                    <option value="saidas">Todas as Despesas</option>
+                    <option value="transferencias">Todas as Transferências</option>
+                    <optgroup label="Categorias de Receita">
+                        {data.categorias.filter(c => c.group === 'entrada' && !c.name.includes('Transferência')).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </optgroup>
+                    <optgroup label="Categorias de Despesa">
+                        {data.categorias.filter(c => c.group === 'saida' && !c.name.includes('Transferência')).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </optgroup>
                 </select>
               </div>
               <div>
                 <label className="text-xs text-slate-500">Filtrar por subcategoria</label>
-                <select className="border rounded-lg px-3 py-2" value={filterSub} onChange={(e) => setFilterSub(e.target.value)} disabled={!filterCat}>
+                <select className="border rounded-lg px-3 py-2" value={filterSub} onChange={(e) => setFilterSub(e.target.value)} disabled={!filterCat || ['entradas', 'saidas', 'transferencias'].includes(filterCat)}>
                   <option value="">Todas</option>
                   {availableSubcategoriesForFilter.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
@@ -1106,16 +1123,12 @@ export default function App() {
                         <td className="py-2 pr-3">{e.description}</td>
                         <td className={`py-2 pr-3 text-right ${signed < 0 ? "text-red-600" : "text-emerald-700"} ${config.privacy ? 'blur-sm' : ''}`}>{fmtBRL(signed)}</td>
                         <td className="py-2 flex items-center gap-2">
-                           {!cat?.name.includes('Transferência') && (
-                            <>
-                              <Button variant="outline" size="icon" title="Editar" onClick={() => handleOpenEntryModal(cat.group, e)}>
-                                <Pencil />
-                              </Button>
-                              <Button variant="outline" size="icon" title="Excluir" onClick={() => askDeleteEntry(e.id)}>
-                                <Trash />
-                              </Button>
-                            </>
-                           )}
+                           <Button variant="outline" size="icon" title="Editar" onClick={() => handleOpenEntryModal(cat.group, e)}>
+                            <Pencil />
+                           </Button>
+                           <Button variant="outline" size="icon" title="Excluir" onClick={() => askDeleteEntry(e.id)}>
+                             <Trash />
+                           </Button>
                         </td>
                       </tr>
                     );
@@ -1641,5 +1654,6 @@ function AuditModal({ account, show, onClose, onSave }) {
         </Modal>
     );
 }
+
 
 
