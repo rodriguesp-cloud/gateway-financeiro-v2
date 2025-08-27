@@ -163,8 +163,8 @@ export class FirestoreService {
         // This is the fix: check dateRange before saving
         if (dataToSave.dateRange && dataToSave.dateRange.from && dataToSave.dateRange.to) {
           dataToSave.dateRange = {
-            from: Timestamp.fromDate(dataToSave.dateRange.from),
-            to: Timestamp.fromDate(dataToSave.dateRange.to),
+            from: Timestamp.fromDate(new Date(dataToSave.dateRange.from)),
+            to: Timestamp.fromDate(new Date(dataToSave.dateRange.to)),
           };
         } else {
           // If range is incomplete, invalid, or undefined, delete it before saving.
