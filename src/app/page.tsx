@@ -904,7 +904,7 @@ export default function App() {
       {/* Hero */}
       <div className={currentTheme.hero}>
         <div className="max-w-7xl mx-auto px-6 py-8">
-          <p className="text-xs italic text-white/70 mb-2">Gestor Financeiro App V2.0</p>
+          <p className="text-xs italic text-white/70 mb-2">Gestor Financeiro App V3.0</p>
           <div className="flex items-end justify-between flex-wrap gap-4">
             <div className="flex items-center gap-4">
               <div>
